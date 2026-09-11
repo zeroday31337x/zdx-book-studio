@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZDX Book Studio</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div><span class="brand-mark">ZDX</span><strong>Book Studio</strong><span class="private-pill">PRIVATE</span></div>
+    <div class="status-row"><span id="agentStatus" class="status-dot">Core: checking</span><span id="userEmail" class="user-email"></span><button id="changePassword" class="ghost">Change password</button><button id="logout" class="ghost">Sign out</button></div>
+  </header>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-head"><span>Books</span><button id="seedCodebound" class="small">+ CodeBound</button></div>
+      <div id="bookList"></div>
+      <button id="newBook" class="wide ghost">+ New book</button>
+    </aside>
+    <main id="workspace" class="workspace">
+      <section class="empty-state"><h1>Manuscript production</h1><p>Design the book, lock canon, assign POV agents, then build one reviewed chapter at a time.</p><button id="emptySeed">Create CodeBound project</button></section>
+    </main>
+  </div>
+  <dialog id="dialog"><form method="dialog" id="dialogForm"><div id="dialogBody"></div><div class="dialog-actions"><button value="cancel" class="ghost">Close</button></div></form></dialog>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
