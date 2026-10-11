@@ -20,7 +20,7 @@ const publicDir = path.resolve(__dirname, "../public");
 const adminEmail = process.env.BOOK_STUDIO_ADMIN_EMAIL || "";
 const adminPassword = process.env.BOOK_STUDIO_ADMIN_PASSWORD || "";
 if (adminEmail && adminPassword) auth.seedAdmin(adminEmail, adminPassword);
-if (!auth.hasUsers()) throw new Error("Book Studio requires at least one seeded account");
+// Cognito is the production identity provider; local seeded accounts are retained only for explicit migration.
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "8mb" }));
@@ -29,6 +29,57 @@ app.use(express.static(publicDir, { index: false }));
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const loginSchema = z.object({ email: z.string().email().max(320), password: z.string().min(1).max(500) });
 const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(500), newPassword: z.string().min(14).max(500) });
+
+const cognitoIssuer = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_NeJS2Eu71";
+const cognitoDomain = "https://zdx-core-166044977986.auth.us-east-1.amazoncognito.com";
+const bookClientId = process.env.BOOK_COGNITO_CLIENT_ID || "5bm33hgo98vvfs0jv26vmo5r4u";
+const bookCallback = "https://bookstudio.zerodrivex.com/api/auth/oidc/callback";
+const oidcCookieName = "zdx_book_oidc_flow";
+
+function oidcSecret() { return process.env.ZDX_OIDC_SECRET || process.env.JWT_SECRET || ""; }
+function signedFlow(payload: Record<string, string>) {
+  const raw = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 5 * 60_000 })).toString("base64url");
+  const signature = crypto.createHmac("sha256", oidcSecret()).update(raw).digest("base64url");
+  return raw + "." + signature;
+}
+function readFlow(value: string | undefined): Record<string, string> | null {
+  if (!value || !oidcSecret()) return null;
+  const [raw, signature] = value.split(".");
+  if (!raw || !signature) return null;
+  const expected = crypto.createHmac("sha256", oidcSecret()).update(raw).digest();
+  let actual: Buffer;
+  try { actual = Buffer.from(signature, "base64url"); } catch { return null; }
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    return parsed && parsed.exp > Date.now() ? parsed : null;
+  } catch { return null; }
+}
+function cookieValue(req: express.Request, name: string) {
+  const header = req.header("cookie") || "";
+  const match = header.match(new RegExp("(?:^|;\\s*)" + name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\function requestSecure(req: express.Request) {") + "=([^;]+)"));
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+async function verifyCognitoIdToken(token: string, nonce: string) {
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("invalid_token");
+  const header = JSON.parse(Buffer.from(parts[0]!, "base64url").toString("utf8"));
+  const claims = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8"));
+  if (header.alg !== "RS256" || typeof header.kid !== "string") throw new Error("invalid_token_header");
+  const response = await fetch(cognitoIssuer + "/.well-known/jwks.json", { signal: AbortSignal.timeout(8000), cache: "no-store" });
+  if (!response.ok) throw new Error("jwks_unavailable");
+  const jwks = await response.json() as { keys?: Array<JsonWebKey & { kid?: string; alg?: string }> };
+  const jwk = jwks.keys?.find(key => key.kid === header.kid && key.kty === "RSA");
+  if (!jwk) throw new Error("unknown_signing_key");
+  const key = crypto.createPublicKey({ key: jwk, format: "jwk" });
+  const valid = crypto.verify("RSA-SHA256", Buffer.from(parts[0] + "." + parts[1]), key, Buffer.from(parts[2]!, "base64url"));
+  if (!valid || claims.iss !== cognitoIssuer || claims.aud !== bookClientId || claims.token_use !== "id" ||
+      claims.nonce !== nonce || typeof claims.sub !== "string" || typeof claims.email !== "string" ||
+      claims.email_verified !== true || !Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) {
+    throw new Error("invalid_identity");
+  }
+  return claims as { sub: string; email: string; ["cognito:groups"]?: string[] };
+}
 
 function requestSecure(req: express.Request) {
   if (process.env.BOOK_STUDIO_COOKIE_SECURE === "1") return true;
@@ -45,7 +96,64 @@ function loginFailed(ip: string) {
   item.count++; loginAttempts.set(ip, item);
 }
 
+app.get("/api/auth/oidc/start", (req, res) => {
+  if (req.header("host") !== "bookstudio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
+  if (!oidcSecret() || oidcSecret().length < 32) return res.status(503).json({ error: "oidc_not_configured" });
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+  const state = crypto.randomBytes(24).toString("base64url");
+  const nonce = crypto.randomBytes(24).toString("base64url");
+  const flow = signedFlow({ verifier, state, nonce });
+  const url = new URL("/oauth2/authorize", cognitoDomain);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", bookClientId);
+  url.searchParams.set("redirect_uri", bookCallback);
+  url.searchParams.set("scope", "openid email profile");
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("code_challenge", challenge);
+  url.searchParams.set("state", state);
+  url.searchParams.set("nonce", nonce);
+  res.setHeader("Set-Cookie", oidcCookieName + "=" + encodeURIComponent(flow) + "; Path=/api/auth/oidc; HttpOnly; Secure; SameSite=Lax; Max-Age=300");
+  res.setHeader("Cache-Control", "no-store");
+  res.redirect(302, url.toString());
+});
+
+app.get("/api/auth/oidc/callback", async (req, res) => {
+  if (req.header("host") !== "bookstudio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
+  const flow = readFlow(cookieValue(req, oidcCookieName));
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const state = typeof req.query.state === "string" ? req.query.state : "";
+  const clearFlow = oidcCookieName + "=; Path=/api/auth/oidc; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+  if (!flow || !code || code.length > 4096 || !state || flow.state !== state) return res.status(400).setHeader("Set-Cookie", clearFlow).json({ error: "invalid_oidc_flow" });
+  try {
+    const upstream = await fetch(cognitoDomain + "/oauth2/token", {
+      method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: bookClientId, code, redirect_uri: bookCallback, code_verifier: flow.verifier }),
+      signal: AbortSignal.timeout(10000), cache: "no-store",
+    });
+    if (!upstream.ok) return res.status(401).setHeader("Set-Cookie", clearFlow).json({ error: "token_exchange_failed" });
+    const tokens = await upstream.json() as { id_token?: string };
+    if (!tokens.id_token) return res.status(401).setHeader("Set-Cookie", clearFlow).json({ error: "missing_id_token" });
+    const identity = await verifyCognitoIdToken(tokens.id_token, flow.nonce);
+    const groups = Array.isArray(identity["cognito:groups"]) ? identity["cognito:groups"] : [];
+    if (!groups.includes("zdx-admin") && !groups.includes("zdx-bookstudio")) return res.status(403).setHeader("Set-Cookie", clearFlow).json({ error: "product_access_denied" });
+    const adminEmailExpected = process.env.ZDX_COGNITO_ADMIN_EMAIL?.trim().toLowerCase();
+    const adminSubExpected = process.env.ZDX_COGNITO_ADMIN_SUB;
+    const bootstrapAdmin = Boolean(adminEmailExpected && adminSubExpected && identity.email.toLowerCase() === adminEmailExpected && identity.sub === adminSubExpected && groups.includes("zdx-admin"));
+    const session = auth.loginCognito(identity.sub, identity.email, bootstrapAdmin);
+    if (!session) return res.status(403).setHeader("Set-Cookie", clearFlow).json({ error: "account_requires_explicit_migration" });
+    res.append("Set-Cookie", sessionCookie(session.token, true));
+    res.append("Set-Cookie", clearFlow);
+    res.setHeader("Cache-Control", "no-store");
+    res.redirect(302, "/");
+  } catch (error) {
+    console.error("[BOOK_STUDIO_OIDC]", error instanceof Error ? error.name : "unknown");
+    return res.status(401).setHeader("Set-Cookie", clearFlow).json({ error: "oidc_login_failed" });
+  }
+});
+
 app.post("/api/auth/login", (req, res) => {
+  return res.status(410).json({ error: "cognito_required", loginUrl: "/api/auth/oidc/start" });
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   if (!loginAllowed(ip)) return res.status(429).json({ error: "too_many_attempts", message: "Too many login attempts. Try again later." });
   const parsed = loginSchema.safeParse(req.body);
