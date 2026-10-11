@@ -10,7 +10,7 @@ import { previousCanonRequired, wordCount } from "./context.js";
 import type { BookProject, Character } from "./types.js";
 import { AuthStore, expiredSessionCookie, sessionCookie, sessionTokenFromCookie } from "./auth.js";
 
-loadEnv();
+loadEnv({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.env") });
 const app = express();
 const store = new BookStore();
 const agents = new BookAgentService();
