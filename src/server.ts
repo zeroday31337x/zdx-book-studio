@@ -9,18 +9,20 @@ import { BookAgentService } from "./agent-service.js";
 import { previousCanonRequired, wordCount } from "./context.js";
 import type { BookProject, Character } from "./types.js";
 import { AuthStore, expiredSessionCookie, sessionCookie, sessionTokenFromCookie } from "./auth.js";
+import { syncCanonChapters, writeCanonChapter } from "./manuscript.js";
 
 loadEnv({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.env") });
 const app = express();
 const store = new BookStore();
 const agents = new BookAgentService();
 const auth = new AuthStore();
+syncCanonChapters(store.list());
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "../public");
 const adminEmail = process.env.BOOK_STUDIO_ADMIN_EMAIL || "";
 const adminPassword = process.env.BOOK_STUDIO_ADMIN_PASSWORD || "";
 if (adminEmail && adminPassword) auth.seedAdmin(adminEmail, adminPassword);
-// Cognito is the production identity provider; local seeded accounts are retained only for explicit migration.
+// Cognito is the production identity provider; local records remain for explicit migration.
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "8mb" }));
@@ -81,19 +83,30 @@ async function verifyCognitoIdToken(token: string, nonce: string) {
   return claims as { sub: string; email: string; email_verified?: boolean; ["cognito:groups"]?: string[] };
 }
 
+
 function requestSecure(req: express.Request) {
   if (process.env.BOOK_STUDIO_COOKIE_SECURE === "1") return true;
   return req.secure || req.header("x-forwarded-proto") === "https";
 }
-function studioUser(req: express.Request) { return auth.authenticate(sessionTokenFromCookie(req.header("cookie"))); }
+
+function studioUser(req: express.Request) {
+  return auth.authenticate(sessionTokenFromCookie(req.header("cookie")));
+}
+
 function loginAllowed(ip: string) {
-  const now = Date.now(); const current = loginAttempts.get(ip);
-  if (!current || current.resetAt <= now) { loginAttempts.set(ip, { count: 0, resetAt: now + 15 * 60_000 }); return true; }
+  const now = Date.now();
+  const current = loginAttempts.get(ip);
+  if (!current || current.resetAt <= now) {
+    loginAttempts.set(ip, { count: 0, resetAt: now + 15 * 60_000 });
+    return true;
+  }
   return current.count < 8;
 }
+
 function loginFailed(ip: string) {
   const item = loginAttempts.get(ip) || { count: 0, resetAt: Date.now() + 15 * 60_000 };
-  item.count++; loginAttempts.set(ip, item);
+  item.count++;
+  loginAttempts.set(ip, item);
 }
 
 app.get("/api/auth/oidc/start", (req, res) => {
@@ -155,29 +168,31 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
 
 app.post("/api/auth/login", (_req, res) => res.status(410).json({ error: "cognito_required", loginUrl: "/api/auth/oidc/start" }));
 
-app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
-
-app.use("/api", (req, res, next) => {
-  const user = studioUser(req);
-  if (!user) return res.status(401).json({ error: "unauthorized" });
-  (req as any).studioUser = user;
-  if (user.mustChangePassword && !["/auth/me", "/auth/change-password", "/auth/logout"].includes(req.path)) return res.status(428).json({ error: "password_change_required", message: "Change the temporary password before using Book Studio." });
-  next();
-});
-
 app.get("/api/auth/me", (req, res) => res.json({ user: (req as any).studioUser }));
+
 app.post("/api/auth/logout", (req, res) => {
   auth.logout(sessionTokenFromCookie(req.header("cookie")));
   res.setHeader("Set-Cookie", expiredSessionCookie(requestSecure(req)));
   res.json({ ok: true });
 });
+
 app.post("/api/auth/change-password", (req, res) => {
   const parsed = changePasswordSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "invalid_password", message: "New password must be at least 14 characters." });
   const user = (req as any).studioUser;
-  if (!auth.changePassword(user.email, parsed.data.currentPassword, parsed.data.newPassword)) return res.status(401).json({ error: "current_password_invalid", message: "Current password is incorrect." });
+  if (!auth.changePassword(user.email, parsed.data.currentPassword, parsed.data.newPassword)) {
+    return res.status(401).json({ error: "current_password_invalid", message: "Current password is incorrect." });
+  }
   res.setHeader("Set-Cookie", expiredSessionCookie(requestSecure(req)));
   res.json({ ok: true, reauthenticate: true });
+});
+
+app.get("/admin", (req, res) => {
+  const user = studioUser(req);
+  if (!user) return res.redirect(302, "/login.html");
+  if (user.mustChangePassword) return res.redirect(302, "/login.html");
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(path.join(publicDir, "admin.html"));
 });
 
 app.get(["/", "/index.html"], (req, res) => {
@@ -200,6 +215,33 @@ app.get("/api/agent-status", async (_req, res) => {
   try { res.json(await agents.providerState()); }
   catch (error) { res.status(503).json({ error: "agent_core_unavailable", message: error instanceof Error ? error.message : String(error) }); }
 });
+app.get("/api/admin/overview", async (req, res) => {
+  const user = (req as any).studioUser;
+  if (!user || user.role !== "admin") return res.status(403).json({ error: "admin_required" });
+  const books = store.list();
+  let inference: { status: string; activeModel?: string | null } = { status: "unavailable" };
+  try {
+    const provider = await agents.providerState();
+    inference = { status: provider.activeProvider ? "ready" : "unavailable", activeModel: provider.activeModel };
+  } catch { /* Admin dashboard remains usable if model introspection fails. */ }
+  const overviewBooks = books.map(book => ({
+    id: book.id, title: book.title, status: book.status, updatedAt: book.updatedAt,
+    chapterCount: book.chapterCount,
+    canonChapters: book.chapters.filter(chapter => chapter.status === "canon").length,
+  }));
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    generatedAt: new Date().toISOString(),
+    summary: {
+      totalBooks: books.length,
+      activeBooks: books.filter(book => book.status !== "complete").length,
+      completedBooks: books.filter(book => book.status === "complete").length,
+      canonChapters: overviewBooks.reduce((total, book) => total + book.canonChapters, 0),
+    },
+    inference, books: overviewBooks,
+  });
+});
+
 app.get("/api/books", (_req, res) => {
   res.json(store.list().map(book => ({ id: book.id, title: book.title, status: book.status, chapterCount: book.chapterCount, canonChapters: book.chapters.filter(ch => ch.status === "canon").length, updatedAt: book.updatedAt })));
 });
@@ -258,6 +300,7 @@ app.post("/api/books/:id/chapters/:number/generate", async (req, res) => {
   if (!previousCanonRequired(book, chapter.number)) return res.status(409).json({ error: "previous_chapters_not_canon", message: "Approve all previous chapters before generating this chapter." });
   try {
     chapter.draft = await agents.writeChapter(book, chapter.number); chapter.wordCount = wordCount(chapter.draft); chapter.generatedAt = new Date().toISOString(); chapter.status = "draft";
+    store.save(book);
     chapter.review = await agents.reviewChapter(book, chapter.number, chapter.draft); chapter.status = chapter.review.verdict === "PASS" ? "reviewed" : "draft";
     store.save(book); res.json({ chapter, review: chapter.review });
   } catch (error) { res.status(500).json({ error: "generation_failed", message: error instanceof Error ? error.message : String(error) }); }
@@ -277,7 +320,8 @@ app.post("/api/books/:id/chapters/:number/approve", (req, res) => {
   pushUnique(book.continuity.facts, chapter.review.continuityDelta); pushUnique(book.continuity.knowledgeState, chapter.review.knowledgeDelta); pushUnique(book.continuity.relationshipState, chapter.review.relationshipDelta);
   book.continuity.timeline.push(`Chapter ${chapter.number}: ${chapter.review.summary}`);
   if (book.chapters.every(ch => ch.status === "canon")) book.status = "complete"; else book.status = "production";
-  res.json(store.save(book));
+  try { writeCanonChapter(book, chapter); res.json(store.save(book)); }
+  catch (error) { res.status(500).json({ error: "canon_file_write_failed", message: error instanceof Error ? error.message : String(error) }); }
 });
 app.get("/api/books/:id/manuscript", (req, res) => {
   const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
@@ -292,3 +336,5 @@ app.get("/{*splat}", (req, res) => { if (!studioUser(req)) return res.redirect(3
 const port = Number(process.env.BOOK_STUDIO_PORT || 3210);
 const host = process.env.BOOK_STUDIO_HOST || "127.0.0.1";
 app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
+
+[executed on device: ubuntu-8gb-hel1-1 (5253a8e3-d739-4485-be9e-dd4d2e9b4eec)]
