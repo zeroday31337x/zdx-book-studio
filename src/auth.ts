@@ -4,7 +4,7 @@ import path from "node:path";
 
 export type StudioRole = "admin";
 export type StudioUser = { email: string; role: StudioRole; mustChangePassword: boolean };
-type UserRecord = StudioUser & { passwordSalt: string; passwordHash: string; createdAt: string; updatedAt: string };
+type UserRecord = StudioUser & { cognitoSub?: string | null; passwordSalt: string; passwordHash: string; createdAt: string; updatedAt: string };
 type SessionRecord = { tokenHash: string; email: string; expiresAt: string; createdAt: string };
 type AuthData = { users: UserRecord[]; sessions: SessionRecord[] };
 
@@ -21,8 +21,39 @@ export class AuthStore {
     if (data.users.some(user => user.email === normalized)) return;
     const now = new Date().toISOString();
     const { salt, hash } = hashPassword(password);
-    data.users.push({ email: normalized, role: "admin", mustChangePassword: true, passwordSalt: salt, passwordHash: hash, createdAt: now, updatedAt: now });
+    data.users.push({ email: normalized, role: "admin", mustChangePassword: true, cognitoSub: null, passwordSalt: salt, passwordHash: hash, createdAt: now, updatedAt: now });
     this.write(data);
+  }
+
+  loginCognito(sub: string, email: string, allowAdminBootstrap = false): { token: string; user: StudioUser } | null {
+    const normalized = normalizeEmail(email);
+    if (!sub || !normalized) return null;
+    const data = this.read(); this.prune(data);
+    let user = data.users.find(item => item.cognitoSub === sub);
+    if (user) {
+      if (user.email !== normalized) return null;
+    } else {
+      const existing = data.users.find(item => item.email === normalized);
+      if (existing) {
+        // Only the exact preconfigured administrator may be bound to a legacy local record.
+        if (!allowAdminBootstrap || existing.role !== "admin" || existing.cognitoSub) return null;
+        existing.cognitoSub = sub;
+        existing.mustChangePassword = false;
+        existing.updatedAt = new Date().toISOString();
+        user = existing;
+      } else {
+        const now = new Date().toISOString();
+        const salt = crypto.randomBytes(16).toString("hex");
+        const passwordHash = crypto.scryptSync(crypto.randomBytes(48).toString("hex"), salt, 64).toString("hex");
+        user = { email: normalized, role: "admin", mustChangePassword: false, cognitoSub: sub, passwordSalt: salt, passwordHash, createdAt: now, updatedAt: now };
+        data.users.push(user);
+      }
+    }
+    const token = crypto.randomBytes(32).toString("base64url");
+    const now = new Date();
+    data.sessions.push({ tokenHash: tokenDigest(token), email: user.email, createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + SESSION_HOURS * 3600_000).toISOString() });
+    this.write(data);
+    return { token, user: publicUser(user) };
   }
 
   login(email: string, password: string): { token: string; user: StudioUser } | null {
