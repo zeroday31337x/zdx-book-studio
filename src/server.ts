@@ -75,10 +75,10 @@ async function verifyCognitoIdToken(token: string, nonce: string) {
   const valid = crypto.verify("RSA-SHA256", Buffer.from(parts[0] + "." + parts[1]), key, Buffer.from(parts[2]!, "base64url"));
   if (!valid || claims.iss !== cognitoIssuer || claims.aud !== bookClientId || claims.token_use !== "id" ||
       claims.nonce !== nonce || typeof claims.sub !== "string" || typeof claims.email !== "string" ||
-      claims.email_verified !== true || !Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) {
+      !Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) {
     throw new Error("invalid_identity");
   }
-  return claims as { sub: string; email: string; ["cognito:groups"]?: string[] };
+  return claims as { sub: string; email: string; email_verified?: boolean; ["cognito:groups"]?: string[] };
 }
 
 function requestSecure(req: express.Request) {
@@ -140,6 +140,7 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
     const adminEmailExpected = process.env.ZDX_COGNITO_ADMIN_EMAIL?.trim().toLowerCase();
     const adminSubExpected = process.env.ZDX_COGNITO_ADMIN_SUB;
     const bootstrapAdmin = Boolean(adminEmailExpected && adminSubExpected && identity.email.toLowerCase() === adminEmailExpected && identity.sub === adminSubExpected && groups.includes("zdx-admin"));
+    if (identity.email_verified !== true && !bootstrapAdmin) return res.status(403).setHeader("Set-Cookie", clearFlow).json({ error: "email_not_verified" });
     const session = auth.loginCognito(identity.sub, identity.email, bootstrapAdmin);
     if (!session) return res.status(403).setHeader("Set-Cookie", clearFlow).json({ error: "account_requires_explicit_migration" });
     res.append("Set-Cookie", sessionCookie(session.token, true));
