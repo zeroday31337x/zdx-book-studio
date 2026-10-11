@@ -117,8 +117,8 @@ export function sessionTokenFromCookie(cookieHeader: string | undefined) {
   }
   return undefined;
 }
-export function sessionCookie(token: string, secure = true) { return `zdx_book_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_HOURS * 3600}${secure ? "; Secure" : ""}`; }
-export function expiredSessionCookie(secure = true) { return `zdx_book_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? "; Secure" : ""}`; }
+export function sessionCookie(token: string, secure = true) { return `zdx_book_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_HOURS * 3600}${secure ? "; Secure" : ""}`; }
+export function expiredSessionCookie(secure = true) { return `zdx_book_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`; }
 function normalizeEmail(value: string) { return String(value || "").trim().toLowerCase(); }
 function tokenDigest(token: string) { return crypto.createHash("sha256").update(token).digest("hex"); }
 function hashPassword(password: string) { const salt = crypto.randomBytes(16).toString("hex"); const hash = crypto.scryptSync(password, salt, 64).toString("hex"); return { salt, hash }; }
