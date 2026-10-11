@@ -57,8 +57,8 @@ function readFlow(value: string | undefined): Record<string, string> | null {
 }
 function cookieValue(req: express.Request, name: string) {
   const header = req.header("cookie") || "";
-  const match = header.match(new RegExp("(?:^|;\\s*)" + name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\function requestSecure(req: express.Request) {") + "=([^;]+)"));
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  const item = header.split(";").map(value => value.trim()).find(value => value.startsWith(name + "="));
+  return item ? decodeURIComponent(item.slice(name.length + 1)) : undefined;
 }
 async function verifyCognitoIdToken(token: string, nonce: string) {
   const parts = token.split(".");
