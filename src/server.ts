@@ -93,6 +93,13 @@ function studioUser(req: express.Request) {
   return auth.authenticate(sessionTokenFromCookie(req.header("cookie")));
 }
 
+// Attach the authenticated local session to every non-static request. API handlers
+// rely on this property; without it the UI receives { user: undefined } after OIDC.
+app.use((req, _res, next) => {
+  (req as any).studioUser = studioUser(req);
+  next();
+});
+
 function loginAllowed(ip: string) {
   const now = Date.now();
   const current = loginAttempts.get(ip);
@@ -168,7 +175,12 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
 
 app.post("/api/auth/login", (_req, res) => res.status(410).json({ error: "cognito_required", loginUrl: "/api/auth/oidc/start" }));
 
-app.get("/api/auth/me", (req, res) => res.json({ user: (req as any).studioUser }));
+app.get("/api/auth/me", (req, res) => {
+  const user = studioUser(req);
+  if (!user) return res.status(401).json({ user: null, error: "authentication_required" });
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ user });
+});
 
 app.post("/api/auth/logout", (req, res) => {
   auth.logout(sessionTokenFromCookie(req.header("cookie")));
