@@ -33,7 +33,7 @@ const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(5
 const cognitoIssuer = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_NeJS2Eu71";
 const cognitoDomain = "https://zdx-core-166044977986.auth.us-east-1.amazoncognito.com";
 const bookClientId = process.env.BOOK_COGNITO_CLIENT_ID || "5bm33hgo98vvfs0jv26vmo5r4u";
-const bookCallback = "https://bookstudio.zerodrivex.com/api/auth/oidc/callback";
+const bookCallback = "https://studio.zerodrivex.com/api/auth/oidc/callback";
 const oidcCookieName = "zdx_book_oidc_flow";
 
 function oidcSecret() { return process.env.ZDX_OIDC_SECRET || process.env.JWT_SECRET || ""; }
@@ -97,7 +97,7 @@ function loginFailed(ip: string) {
 }
 
 app.get("/api/auth/oidc/start", (req, res) => {
-  if (req.header("host") !== "bookstudio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
+  if (req.header("host") !== "studio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
   if (!oidcSecret() || oidcSecret().length < 32) return res.status(503).json({ error: "oidc_not_configured" });
   const verifier = crypto.randomBytes(32).toString("base64url");
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
@@ -119,7 +119,7 @@ app.get("/api/auth/oidc/start", (req, res) => {
 });
 
 app.get("/api/auth/oidc/callback", async (req, res) => {
-  if (req.header("host") !== "bookstudio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
+  if (req.header("host") !== "studio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
   const flow = readFlow(cookieValue(req, oidcCookieName));
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
