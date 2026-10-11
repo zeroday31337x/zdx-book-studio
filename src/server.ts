@@ -71,7 +71,7 @@ async function verifyCognitoIdToken(token: string, nonce: string) {
   const jwks = await response.json() as { keys?: Array<JsonWebKey & { kid?: string; alg?: string }> };
   const jwk = jwks.keys?.find(key => key.kid === header.kid && key.kty === "RSA");
   if (!jwk) throw new Error("unknown_signing_key");
-  const key = crypto.createPublicKey({ key: jwk, format: "jwk" });
+  const key = crypto.createPublicKey({ key: jwk as any, format: "jwk" });
   const valid = crypto.verify("RSA-SHA256", Buffer.from(parts[0] + "." + parts[1]), key, Buffer.from(parts[2]!, "base64url"));
   if (!valid || claims.iss !== cognitoIssuer || claims.aud !== bookClientId || claims.token_use !== "id" ||
       claims.nonce !== nonce || typeof claims.sub !== "string" || typeof claims.email !== "string" ||
@@ -153,18 +153,7 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
   }
 });
 
-app.post("/api/auth/login", (req, res) => {
-  return res.status(410).json({ error: "cognito_required", loginUrl: "/api/auth/oidc/start" });
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
-  if (!loginAllowed(ip)) return res.status(429).json({ error: "too_many_attempts", message: "Too many login attempts. Try again later." });
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) { loginFailed(ip); return res.status(400).json({ error: "invalid_login" }); }
-  const result = auth.login(parsed.data.email, parsed.data.password);
-  if (!result) { loginFailed(ip); return res.status(401).json({ error: "invalid_credentials", message: "Invalid email or password." }); }
-  loginAttempts.delete(ip);
-  res.setHeader("Set-Cookie", sessionCookie(result.token, requestSecure(req)));
-  res.json({ user: result.user });
-});
+app.post("/api/auth/login", (_req, res) => res.status(410).json({ error: "cognito_required", loginUrl: "/api/auth/oidc/start" }));
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
