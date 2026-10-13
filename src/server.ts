@@ -120,6 +120,7 @@ app.get("/api/auth/oidc/start", (req, res) => {
 
 app.get("/api/auth/oidc/callback", async (req, res) => {
   if (req.header("host") !== "studio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
+  if (!bookClientId || !oidcSecret() || Buffer.byteLength(oidcSecret(), "utf8") < 32) return res.status(503).json({ error: "oidc_not_configured" });
   const flow = readFlow(cookieValue(req, oidcCookieName));
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
