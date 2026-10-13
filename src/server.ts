@@ -328,5 +328,3 @@ app.get("/{*splat}", (req, res) => { if (!studioUser(req)) return res.redirect(3
 const port = Number(process.env.BOOK_STUDIO_PORT || 3210);
 const host = process.env.BOOK_STUDIO_HOST || "127.0.0.1";
 app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
-
-[executed on device: ubuntu-8gb-hel1-1 (5253a8e3-d739-4485-be9e-dd4d2e9b4eec)]
