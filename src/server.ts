@@ -28,13 +28,9 @@ app.set("trust proxy", 1);
 app.use(express.json({ limit: "8mb" }));
 app.use(express.static(publicDir, { index: false }));
 
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-const loginSchema = z.object({ email: z.string().email().max(320), password: z.string().min(1).max(500) });
-const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(500), newPassword: z.string().min(14).max(500) });
-
 const cognitoIssuer = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_NeJS2Eu71";
 const cognitoDomain = "https://zdx-core-166044977986.auth.us-east-1.amazoncognito.com";
-const bookClientId = process.env.BOOK_COGNITO_CLIENT_ID || "5bm33hgo98vvfs0jv26vmo5r4u";
+const bookClientId = process.env.BOOK_COGNITO_CLIENT_ID || "";
 const bookCallback = "https://studio.zerodrivex.com/api/auth/oidc/callback";
 const oidcCookieName = "zdx_book_oidc_flow";
 
@@ -100,25 +96,9 @@ app.use((req, _res, next) => {
   next();
 });
 
-function loginAllowed(ip: string) {
-  const now = Date.now();
-  const current = loginAttempts.get(ip);
-  if (!current || current.resetAt <= now) {
-    loginAttempts.set(ip, { count: 0, resetAt: now + 15 * 60_000 });
-    return true;
-  }
-  return current.count < 8;
-}
-
-function loginFailed(ip: string) {
-  const item = loginAttempts.get(ip) || { count: 0, resetAt: Date.now() + 15 * 60_000 };
-  item.count++;
-  loginAttempts.set(ip, item);
-}
-
 app.get("/api/auth/oidc/start", (req, res) => {
   if (req.header("host") !== "studio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
-  if (!oidcSecret() || oidcSecret().length < 32) return res.status(503).json({ error: "oidc_not_configured" });
+  if (!bookClientId || !oidcSecret() || Buffer.byteLength(oidcSecret(), "utf8") < 32) return res.status(503).json({ error: "oidc_not_configured" });
   const verifier = crypto.randomBytes(32).toString("base64url");
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const state = crypto.randomBytes(24).toString("base64url");
@@ -140,6 +120,7 @@ app.get("/api/auth/oidc/start", (req, res) => {
 
 app.get("/api/auth/oidc/callback", async (req, res) => {
   if (req.header("host") !== "studio.zerodrivex.com" || req.header("x-forwarded-proto") !== "https") return res.status(400).json({ error: "invalid_origin" });
+  if (!bookClientId || !oidcSecret() || Buffer.byteLength(oidcSecret(), "utf8") < 32) return res.status(503).json({ error: "oidc_not_configured" });
   const flow = readFlow(cookieValue(req, oidcCookieName));
   const code = typeof req.query.code === "string" ? req.query.code : "";
   const state = typeof req.query.state === "string" ? req.query.state : "";
@@ -161,7 +142,8 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
     const adminSubExpected = process.env.ZDX_COGNITO_ADMIN_SUB;
     const bootstrapAdmin = Boolean(adminEmailExpected && adminSubExpected && identity.email.toLowerCase() === adminEmailExpected && identity.sub === adminSubExpected && groups.includes("zdx-admin"));
     if (identity.email_verified !== true && !bootstrapAdmin) return res.status(403).setHeader("Set-Cookie", clearFlow).json({ error: "email_not_verified" });
-    const session = auth.loginCognito(identity.sub, identity.email, bootstrapAdmin);
+    const studioRole = groups.includes("zdx-admin") ? "admin" : "writer";
+    const session = auth.loginCognito(identity.sub, identity.email, studioRole, bootstrapAdmin);
     if (!session) return res.status(403).setHeader("Set-Cookie", clearFlow).json({ error: "account_requires_explicit_migration" });
     res.append("Set-Cookie", sessionCookie(session.token, true));
     res.append("Set-Cookie", clearFlow);
@@ -188,20 +170,18 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/auth/change-password", (req, res) => {
-  const parsed = changePasswordSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "invalid_password", message: "New password must be at least 14 characters." });
+app.post("/api/auth/change-password", (_req, res) => res.status(410).json({ error: "cognito_managed_password", message: "Change your password through ZeroDriveX sign-in." }));
+
+app.use("/api", (req, res, next) => {
   const user = (req as any).studioUser;
-  if (!auth.changePassword(user.email, parsed.data.currentPassword, parsed.data.newPassword)) {
-    return res.status(401).json({ error: "current_password_invalid", message: "Current password is incorrect." });
-  }
-  res.setHeader("Set-Cookie", expiredSessionCookie(requestSecure(req)));
-  res.json({ ok: true, reauthenticate: true });
+  if (!user) return res.status(401).json({ error: "authentication_required" });
+  next();
 });
 
 app.get("/admin", (req, res) => {
   const user = studioUser(req);
   if (!user) return res.redirect(302, "/login.html");
+  if (user.role !== "admin") return res.redirect(302, "/");
   if (user.mustChangePassword) return res.redirect(302, "/login.html");
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(path.join(publicDir, "admin.html"));
@@ -348,5 +328,3 @@ app.get("/{*splat}", (req, res) => { if (!studioUser(req)) return res.redirect(3
 const port = Number(process.env.BOOK_STUDIO_PORT || 3210);
 const host = process.env.BOOK_STUDIO_HOST || "127.0.0.1";
 app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
-
-[executed on device: ubuntu-8gb-hel1-1 (5253a8e3-d739-4485-be9e-dd4d2e9b4eec)]
