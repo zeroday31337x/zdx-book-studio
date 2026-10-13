@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export type StudioRole = "admin";
+export type StudioRole = "admin" | "writer";
 export type StudioUser = { email: string; role: StudioRole; mustChangePassword: boolean };
 type UserRecord = StudioUser & { cognitoSub?: string | null; passwordSalt: string; passwordHash: string; createdAt: string; updatedAt: string };
 type SessionRecord = { tokenHash: string; email: string; expiresAt: string; createdAt: string };
@@ -25,18 +25,22 @@ export class AuthStore {
     this.write(data);
   }
 
-  loginCognito(sub: string, email: string, allowAdminBootstrap = false): { token: string; user: StudioUser } | null {
+  loginCognito(sub: string, email: string, role: StudioRole, allowAdminBootstrap = false): { token: string; user: StudioUser } | null {
     const normalized = normalizeEmail(email);
     if (!sub || !normalized) return null;
     const data = this.read(); this.prune(data);
     let user = data.users.find(item => item.cognitoSub === sub);
     if (user) {
       if (user.email !== normalized) return null;
+      if (user.role !== role) {
+        user.role = role;
+        user.updatedAt = new Date().toISOString();
+      }
     } else {
       const existing = data.users.find(item => item.email === normalized);
       if (existing) {
         // Only the exact preconfigured administrator may be bound to a legacy local record.
-        if (!allowAdminBootstrap || existing.role !== "admin" || existing.cognitoSub) return null;
+        if (!allowAdminBootstrap || role !== "admin" || existing.role !== "admin" || existing.cognitoSub) return null;
         existing.cognitoSub = sub;
         existing.mustChangePassword = false;
         existing.updatedAt = new Date().toISOString();
@@ -45,7 +49,7 @@ export class AuthStore {
         const now = new Date().toISOString();
         const salt = crypto.randomBytes(16).toString("hex");
         const passwordHash = crypto.scryptSync(crypto.randomBytes(48).toString("hex"), salt, 64).toString("hex");
-        user = { email: normalized, role: "admin", mustChangePassword: false, cognitoSub: sub, passwordSalt: salt, passwordHash, createdAt: now, updatedAt: now };
+        user = { email: normalized, role, mustChangePassword: false, cognitoSub: sub, passwordSalt: salt, passwordHash, createdAt: now, updatedAt: now };
         data.users.push(user);
       }
     }
