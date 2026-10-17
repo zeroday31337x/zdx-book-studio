@@ -304,7 +304,7 @@ app.post("/api/books/:id/chapters/:number/review", async (req, res) => {
   try { chapter.review = await agents.reviewChapter(book, chapter.number, chapter.draft); chapter.status = chapter.review.verdict === "PASS" ? "reviewed" : "draft"; res.json(store.save(book)); }
   catch (error) { res.status(500).json({ error: "review_failed", message: error instanceof Error ? error.message : String(error) }); }
 });
-app.post("/api/books/:id/chapters/:number/approve", (req, res) => {
+app.post("/api/books/:id/chapters/:number/approve", async (req, res) => {
   const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
   const chapter = chapterOf(book, req.params.number); if (!chapter) return res.status(404).json({ error: "chapter_not_found" });
   if (!chapter.review || chapter.review.verdict !== "PASS") return res.status(409).json({ error: "review_pass_required" });
@@ -312,7 +312,7 @@ app.post("/api/books/:id/chapters/:number/approve", (req, res) => {
   pushUnique(book.continuity.facts, chapter.review.continuityDelta); pushUnique(book.continuity.knowledgeState, chapter.review.knowledgeDelta); pushUnique(book.continuity.relationshipState, chapter.review.relationshipDelta);
   book.continuity.timeline.push(`Chapter ${chapter.number}: ${chapter.review.summary}`);
   if (book.chapters.every(ch => ch.status === "canon")) book.status = "complete"; else book.status = "production";
-  try { writeCanonChapter(book, chapter); res.json(store.save(book)); }
+  try { writeCanonChapter(book, chapter); const saved = store.save(book); await agents.recordCanonChapter(book, chapter.number); res.json(saved); }
   catch (error) { res.status(500).json({ error: "canon_file_write_failed", message: error instanceof Error ? error.message : String(error) }); }
 });
 app.get("/api/books/:id/manuscript", (req, res) => {
@@ -327,4 +327,7 @@ function pushUnique(target: string[], values: string[]) { for (const value of va
 app.get("/{*splat}", (req, res) => { if (!studioUser(req)) return res.redirect(302, "/login.html"); res.sendFile(path.join(publicDir, "index.html")); });
 const port = Number(process.env.BOOK_STUDIO_PORT || 3210);
 const host = process.env.BOOK_STUDIO_HOST || "127.0.0.1";
-app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
+const server = app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => server.close(() => { void agents.close().finally(() => process.exit(0)); }));
+}

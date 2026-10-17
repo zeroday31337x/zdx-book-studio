@@ -1,0 +1,28 @@
+{
+  "name": "@zerodrivex/memory-pool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Provider-independent, policy-scoped memory routing for ZeroDriveX agents.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts"
+  },
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "migrate:postgres": "tsx scripts/migrate-postgres.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "pg": "^8.16.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
