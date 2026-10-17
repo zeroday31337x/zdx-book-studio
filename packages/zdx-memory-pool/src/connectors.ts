@@ -35,10 +35,10 @@ export class ZdxMemoryConnector {
     return this.pool.put(this.context, { ...input, system: this.system });
   }
 
-  healthCheck() {
+  async healthCheck() {
     // Force creation of the adapter for this connector's system so health checks
     // are useful before the first read/write.
-    this.pool.adapterFor(this.system);
+    await this.pool.ensureAdapter(this.system);
     return this.pool.healthCheck();
   }
 
