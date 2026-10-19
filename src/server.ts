@@ -148,7 +148,7 @@ app.get("/api/auth/oidc/callback", async (req, res) => {
     res.append("Set-Cookie", sessionCookie(session.token, true));
     res.append("Set-Cookie", clearFlow);
     res.setHeader("Cache-Control", "no-store");
-    res.redirect(302, "/");
+    res.redirect(302, "/index.html");
   } catch (error) {
     console.error("[BOOK_STUDIO_OIDC]", error instanceof Error ? error.name : "unknown");
     return res.status(401).setHeader("Set-Cookie", clearFlow).json({ error: "oidc_login_failed" });
@@ -312,7 +312,7 @@ app.post("/api/books/:id/chapters/:number/approve", async (req, res) => {
   pushUnique(book.continuity.facts, chapter.review.continuityDelta); pushUnique(book.continuity.knowledgeState, chapter.review.knowledgeDelta); pushUnique(book.continuity.relationshipState, chapter.review.relationshipDelta);
   book.continuity.timeline.push(`Chapter ${chapter.number}: ${chapter.review.summary}`);
   if (book.chapters.every(ch => ch.status === "canon")) book.status = "complete"; else book.status = "production";
-  try { writeCanonChapter(book, chapter); const saved = store.save(book); await agents.recordCanonChapter(book, chapter.number); res.json(saved); }
+  try { writeCanonChapter(book, chapter); const saved = store.save(book); res.json(saved); }
   catch (error) { res.status(500).json({ error: "canon_file_write_failed", message: error instanceof Error ? error.message : String(error) }); }
 });
 app.get("/api/books/:id/manuscript", (req, res) => {

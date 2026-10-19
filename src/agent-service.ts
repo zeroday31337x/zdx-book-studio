@@ -3,7 +3,6 @@ import { pathToFileURL } from "node:url";
 import { config as loadEnv } from "dotenv";
 import type { BookProject, ChapterReview, Character } from "./types.js";
 import { chapterContext } from "./context.js";
-import { closeBookMemoryPool, readBookContinuity, recordCanonChapter } from "./memory-pool.js";
 
 loadEnv();
 const coreEnv = process.env.ZDX_AGENT_ENV || path.resolve(process.cwd(), "../zdx-agent-team/.env");
@@ -36,13 +35,6 @@ export class BookAgentService {
 
   async providerState() { await this.load(); return this.models.getProviderState(); }
 
-  async recordCanonChapter(book: BookProject, chapterNumber: number) {
-    const chapter = book.chapters.find(item => item.number === chapterNumber);
-    if (chapter) await recordCanonChapter(book, chapter);
-  }
-
-  async close() { await closeBookMemoryPool(); }
-
   async writeChapter(book: BookProject, chapterNumber: number) {
     await this.load();
     const chapter = book.chapters.find(item => item.number === chapterNumber);
@@ -50,7 +42,7 @@ export class BookAgentService {
     const pov = book.characters.find(character => character.id === chapter.povCharacterId);
     if (!pov) throw new Error("Chapter POV character is not configured");
     if (!chapter.structure.trim()) throw new Error("Chapter structure is empty");
-    const packet = { ...chapterContext(book, chapter, pov), memoryPoolContinuity: await readBookContinuity(book.id) };
+    const packet = { ...chapterContext(book, chapter, pov) };
     const writerId = `${pov.id}_writer`;
     const team = this.writerTeam(writerId, pov);
     const runtime = new this.core!.TeamRuntime(team, this.models);
@@ -72,7 +64,7 @@ export class BookAgentService {
     if (!chapter) throw new Error("Chapter not found");
     const pov = book.characters.find(character => character.id === chapter.povCharacterId);
     if (!pov) throw new Error("Chapter POV character is not configured");
-    const packet = { ...chapterContext(book, chapter, pov), memoryPoolContinuity: await readBookContinuity(book.id), candidateDraft: draft };
+    const packet = { ...chapterContext(book, chapter, pov), candidateDraft: draft };
     const reviewerId = "book_reviewer";
     const runtime = new this.core!.TeamRuntime(this.reviewerTeam(reviewerId), this.models);
     const objective = [
