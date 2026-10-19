@@ -64,7 +64,7 @@ export class BookAgentService {
     if (!chapter) throw new Error("Chapter not found");
     const pov = book.characters.find(character => character.id === chapter.povCharacterId);
     if (!pov) throw new Error("Chapter POV character is not configured");
-    const packet = { ...chapterContext(book, chapter, pov), memoryPoolContinuity: await readBookContinuity(book.id), candidateDraft: draft };
+    const packet = { ...chapterContext(book, chapter, pov), candidateDraft: draft };
     const reviewerId = "book_reviewer";
     const runtime = new this.core!.TeamRuntime(this.reviewerTeam(reviewerId), this.models);
     const objective = [
