@@ -329,5 +329,5 @@ const port = Number(process.env.BOOK_STUDIO_PORT || 3210);
 const host = process.env.BOOK_STUDIO_HOST || "127.0.0.1";
 const server = app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
-  process.once(signal, () => server.close(() => { void agents.close().finally(() => process.exit(0)); }));
+  process.once(signal, () => server.close(() => process.exit(0)));
 }
