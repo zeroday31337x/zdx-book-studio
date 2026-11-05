@@ -55,3 +55,7 @@ This repository is the sole authoritative Book Studio source repository. The 202
 ### Architecture change documentation rule
 
 Every architecture, runtime, authentication, storage, integration or deployment change must update `SOURCE_OF_TRUTH.md`, relevant `docs/architecture/` decision records and deployment runbooks **in the same pull request/commit as the code**. Record source commit and deployment status (planned, in Git, built, staged or live), dependencies, env-key names (never values), persistence boundaries, verification, and rollback. Cross-platform changes must also update the central ZeroDriveX architecture inventory in `zeroday31337x/zerodrivex`.
+
+### AgentCore research and evidence
+
+Book Studio is a production AgentCore integration. The [research-data contract](docs/research/AGENTCORE-RESEARCH-DATA.md) defines provenance, inference telemetry, authorized research retention, and missing capture coverage. The shared inference pool remains separate from AgentCore; standalone Axiomatic Runtime is not required for book generation.
