@@ -36,6 +36,12 @@ export interface Chapter {
   approvedText: string;
   wordCount: number;
   review?: ChapterReview;
+  reviewStatus?: "idle" | "reviewing" | "complete" | "failed";
+  reviewStartedAt?: string;
+  reviewError?: string;
+  generationStatus?: "idle" | "generating" | "complete" | "failed";
+  generationStartedAt?: string;
+  generationError?: string;
   generatedAt?: string;
   approvedAt?: string;
 }
@@ -49,8 +55,11 @@ export interface ContinuityState {
 }
 
 export interface BookProject {
+  frictionWrite?: import('./frictionwrite.js').FrictionConfig;
   id: string;
   title: string;
+  ownerEmail?: string;
+  autoRun?: { status: "running" | "paused" | "complete"; nextChapter: number; lastError?: string; updatedAt: string };
   tagline: string;
   genre: string;
   tone: string;
@@ -60,6 +69,9 @@ export interface BookProject {
   chapterCount: number;
   movementCount: number;
   targetWords: number;
+  chapterTargetWords?: number;
+  writingStyle?: string;
+  writingSample?: string;
   status: "design" | "production" | "complete";
   characters: Character[];
   chapters: Chapter[];

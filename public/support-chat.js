@@ -1,0 +1,6 @@
+(()=>{
+const $=id=>document.getElementById(id),history=[];
+$('support-toggle').onclick=()=>{$('support-panel').hidden=!$('support-panel').hidden;if(!$('support-panel').hidden)$('support-input').focus()};
+function add(role,content){const p=document.createElement('p');p.style.margin='8px 0';p.textContent=(role==='user'?'You: ':'Support: ')+content;$('support-messages').append(p);$('support-messages').scrollTop=$('support-messages').scrollHeight}
+$('support-form').onsubmit=async e=>{e.preventDefault();const input=$('support-input'),message=input.value.trim();if(!message)return;input.value='';add('user',message);const btn=$('support-send');btn.disabled=true;try{const response=await fetch('/api/support/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,history:history.slice(-6)})});const data=await response.json();const reply=data.reply||'Unable to respond right now. Please consult the user guide.';add('assistant',reply);history.push({role:'user',content:message},{role:'assistant',content:reply.slice(0,1200)})}catch{add('assistant','Support is temporarily unavailable. Please consult the user guide.')}finally{btn.disabled=false}}
+})();

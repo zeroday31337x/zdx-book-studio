@@ -1,48 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import crypto from "node:crypto";
-import type { BookProject, Character } from "./types.js";
+import type { Character } from "./types.js";
+import { SqliteBookStore } from "./sqlite-store.js";
 
-export class BookStore {
-  constructor(private filePath = process.env.BOOK_STUDIO_DATA || path.resolve("data/books.json")) {}
-
-  list(): BookProject[] { return this.read(); }
-  get(id: string): BookProject | undefined { return this.read().find(book => book.id === id); }
-
-  save(book: BookProject): BookProject {
-    const books = this.read();
-    const index = books.findIndex(item => item.id === book.id);
-    book.updatedAt = new Date().toISOString();
-    if (index >= 0) books[index] = book; else books.push(book);
-    this.write(books);
-    return book;
-  }
-
-  create(input: Partial<BookProject> & Pick<BookProject, "title">): BookProject {
-    const now = new Date().toISOString();
-    const chapterCount = input.chapterCount || 42;
-    const book: BookProject = {
-      id: crypto.randomUUID(), title: input.title, tagline: input.tagline || "", genre: input.genre || "",
-      tone: input.tone || "", premise: input.premise || "", overview: input.overview || "", canon: input.canon || "",
-      chapterCount, movementCount: input.movementCount || 6, targetWords: input.targetWords || 80000,
-      status: input.status || "design", characters: input.characters || [], continuity: input.continuity || emptyContinuity(),
-      chapters: Array.from({ length: chapterCount }, (_, i) => ({ number: i + 1, title: `Chapter ${i + 1}`, povCharacterId: "", structure: "", status: "planned", draft: "", approvedText: "", wordCount: 0 })),
-      createdAt: now, updatedAt: now
-    };
-    return this.save(book);
-  }
-
-  private read(): BookProject[] {
-    if (!existsSync(this.filePath)) return [];
-    try { const parsed = JSON.parse(readFileSync(this.filePath, "utf8")); return Array.isArray(parsed) ? parsed : []; }
-    catch { return []; }
-  }
-
-  private write(books: BookProject[]) {
-    mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const temp = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(temp, `${JSON.stringify(books, null, 2)}\n`, "utf8");
-    renameSync(temp, this.filePath);
+export class BookStore extends SqliteBookStore {
+  constructor(filePath?: string) {
+    if (filePath?.endsWith(".json")) {
+      super(filePath.replace(/\.json$/, ".sqlite"), filePath);
+    } else {
+      super(filePath);
+    }
   }
 }
 

@@ -8,6 +8,8 @@ import { previousCanonRequired, wordCount } from "../src/context.js";
 
 test("CodeBound seed creates 42 chapters with 14 POV chapters each", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "zdx-book-studio-"));
+  const previousManuscriptDir = process.env.BOOK_STUDIO_MANUSCRIPT_DIR;
+  process.env.BOOK_STUDIO_MANUSCRIPT_DIR = path.join(dir, "manuscript");
   try {
     const store = new BookStore(path.join(dir, "books.json"));
     const book = seedCodebound(store);
@@ -15,11 +17,17 @@ test("CodeBound seed creates 42 chapters with 14 POV chapters each", () => {
     assert.equal(book.characters.length, 3);
     for (const id of ["phreaker", "hacker", "crypto"]) assert.equal(book.chapters.filter(ch => ch.povCharacterId === id).length, 14);
     assert.equal(seedCodebound(store).id, book.id);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    if (previousManuscriptDir === undefined) delete process.env.BOOK_STUDIO_MANUSCRIPT_DIR;
+    else process.env.BOOK_STUDIO_MANUSCRIPT_DIR = previousManuscriptDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("sequential gate requires all prior chapters to be canon", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "zdx-book-studio-"));
+  const previousManuscriptDir = process.env.BOOK_STUDIO_MANUSCRIPT_DIR;
+  process.env.BOOK_STUDIO_MANUSCRIPT_DIR = path.join(dir, "manuscript");
   try {
     const store = new BookStore(path.join(dir, "books.json"));
     const book = seedCodebound(store);
@@ -28,7 +36,11 @@ test("sequential gate requires all prior chapters to be canon", () => {
     book.chapters[0].status = "canon";
     assert.equal(previousCanonRequired(book, 2), true);
     assert.equal(previousCanonRequired(book, 3), false);
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    if (previousManuscriptDir === undefined) delete process.env.BOOK_STUDIO_MANUSCRIPT_DIR;
+    else process.env.BOOK_STUDIO_MANUSCRIPT_DIR = previousManuscriptDir;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("wordCount handles draft prose", () => {

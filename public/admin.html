@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Book Studio · Administration</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" /><link rel="icon" href="/favicon.ico" sizes="any" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#090d15;color:#f2f5fa;font:15px/1.5 system-ui,sans-serif}
+header{border-bottom:1px solid #344053;padding:16px max(16px,calc((100vw - 1120px)/2));display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+a{color:#b6d9ff}button{background:#e5efff;border:0;color:#0d192b;padding:9px 13px;border-radius:7px;font-weight:700;cursor:pointer}
+main{max-width:1120px;margin:auto;padding:28px 16px}h1{margin:0 0 10px}.muted{color:#a1b1c8}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:22px 0}
+article,section.panel{background:#101a2a;border:1px solid #344053;border-radius:12px;padding:18px}article strong{display:block;font-size:30px}
+table{border-collapse:collapse;width:100%;min-width:550px}td,th{padding:10px;border-bottom:1px solid #344053;text-align:left}th{color:#a1b1c8}
+.tableWrap{overflow-x:auto}.status{padding:6px 10px;border-radius:6px;background:#163521}
+.error{color:#ffb7b7}footer{max-width:1120px;margin:15px auto 40px;padding:0 16px;color:#a1b1c8}
+</style>
+<link rel="stylesheet" href="/site-menu.css?v=1"></head>
+<body><details class="site-menu"><summary aria-label="Open navigation menu">☰ Menu</summary><nav class="site-menu-panel" aria-label="Administrator navigation"><a href="/">Book workspace</a><a href="/admin">Admin dashboard</a><a href="/admin/logs">Logs &amp; inference</a><a href="/admin/users/review">User reviews</a><a href="/admin-guide.html">Admin guide</a><a href="/guide.html">User guide</a></nav></details>
+<header><div><strong>ZeroDriveX Book Studio</strong> <span class="muted">/ Administration</span></div>
+<nav><a href="/admin/logs">Logs &amp; Inference</a> · <a href="/admin-guide.html">Admin guide</a> · <a href="/">Book workspace</a> · <a href="https://zerodrivex.com/admin">ZeroDriveX admin</a> · <button id="refresh" type="button">Refresh</button></nav></header>
+<main><h1>Book production operations</h1><p class="muted">Private administration for manuscript production, completed canon, and inference readiness.</p>
+<p id="message" role="status">Connecting to Book Studio…</p>
+<div class="grid">
+<article><span class="muted">Total projects</span><strong id="total">—</strong></article>
+<article><span class="muted">Active productions</span><strong id="active">—</strong></article>
+<article><span class="muted">Completed projects</span><strong id="completed">—</strong></article>
+<article><span class="muted">Canonical chapters</span><strong id="canon">—</strong></article>
+</div>
+<section class="panel"><h2>Inference and workers</h2><p id="inference">Checking shared ZDX inference…</p><p class="muted" id="updated"></p></section>
+<section class="panel" style="margin-top:18px"><h2>Current book inventory</h2><div class="tableWrap">
+<table><thead><tr><th>Project</th><th>Status</th><th>Approved / Total</th><th>Last update</th></tr></thead><tbody id="books"></tbody></table></div></section>
+<section class="panel" style="margin-top:18px"><h2>Users & subscription tiers</h2>
+<p class="muted">Plans: Basic $49.99/month (5 books, 30 chapters/book, 3,000 words/chapter); Premium $99.99/month (25 books, 200 chapters/book, 10,000 words/chapter). Pricing is informational; no billing is activated. Existing books are preserved if an account is disabled or removed.</p>
+<div class="field"><label>User email <input id="userEmail" type="email" placeholder="reader@example.com" autocomplete="off"></label> <label>Role <select id="userRole"><option value="user">Reader</option><option value="admin">Administrator</option></select></label> <label>Tier <select id="userTier"><option value="basic">Basic</option><option value="premium">Premium</option></select></label> <label><input type="checkbox" id="userDisabled"> Disabled</label> <button id="saveUser" type="button">Create / update user</button></div>
+<p id="userMessage" role="status"></p>
+<div class="tableWrap"><table><thead><tr><th>Email</th><th>Role</th><th>Tier</th><th>Status</th><th>Identity</th><th>Usage</th><th>Actions</th></tr></thead><tbody id="users"></tbody></table></div>
+<p class="muted">Book Studio access requires a Cognito identity in the permitted Book Studio group. Creating a user here assigns a tier and permissions; it does not create a Cognito password or send an invitation.</p>
+</section>
+</main><footer>Private administrative interface. Keep manuscript and customer data inside authenticated systems. <a href="https://zerodrivex.com/privacy-policy">Privacy policy</a></footer>
+<script>
+const $=id=>document.getElementById(id);
+async function check(){
+$('message').textContent='Refreshing data…';
+try{
+const res=await fetch('/api/admin/overview',{credentials:'same-origin',cache:'no-store'});
+if(res.status===401||res.status===428){location.href='/login.html';return;}
+const data=await res.json();if(!res.ok)throw new Error(data.error||'Unable to load admin operations');
+$('total').textContent=data.summary.totalBooks;
+$('active').textContent=data.summary.activeBooks;
+$('completed').textContent=data.summary.completedBooks;
+$('canon').textContent=data.summary.canonChapters;
+$('inference').textContent=data.inference?.status==='ready'?'Pool online · '+(data.inference.activeModel||'model unspecified'):'Pool unavailable or not configured';
+$('updated').textContent='Updated '+new Date(data.generatedAt).toLocaleString();
+$('books').replaceChildren();
+for(const item of data.books){
+const tr=document.createElement('tr');
+for(const value of [item.title,item.status,item.canonChapters+' / '+item.chapterCount,new Date(item.updatedAt).toLocaleString()]){
+const td=document.createElement('td');td.textContent=String(value);tr.append(td);}
+$('books').append(tr);
+}
+$('message').textContent='Operations connected.';$('message').className='status';
+}catch(e){$('message').textContent=String(e.message||e);$('message').className='error';}
+}
+async function loadUsers(){
+const response=await fetch('/api/admin/users',{credentials:'same-origin',cache:'no-store'});
+if(!response.ok)throw new Error('User management unavailable');
+const data=await response.json();const rows=$('users');rows.replaceChildren();
+for(const user of data.users){
+ const tr=document.createElement('tr');
+ for(const value of [user.email,user.role,user.tier,user.disabled?'Disabled':'Enabled',user.cognitoLinked?'Linked':'Not linked',user.usage.books+' / '+user.limits.maxBooks+' books · '+user.usage.chaptersGenerated+' generated']){
+   const td=document.createElement('td');td.textContent=value;tr.append(td);
+ }
+ const actions=document.createElement('td');
+ const edit=document.createElement('button');edit.type='button';edit.textContent='Edit';edit.onclick=()=>{
+ $('userEmail').value=user.email;$('userRole').value=user.role;$('userTier').value=user.tier;$('userDisabled').checked=user.disabled;
+ };
+ const del=document.createElement('button');del.type='button';del.textContent='Delete';del.style.marginLeft='6px';del.onclick=async()=>{
+ if(!confirm('Delete account '+user.email+'? This cannot be undone; accounts owning books cannot be deleted.'))return;
+ const res=await fetch('/api/admin/users/'+encodeURIComponent(user.email),{method:'DELETE',credentials:'same-origin'});
+ const result=await res.json();$('userMessage').textContent=res.ok?'Account deleted':(result.error||'Unable to delete');await loadUsers();
+ };
+ const review=document.createElement('button');review.type='button';review.textContent='Review';review.style.marginLeft='6px';review.onclick=()=>{location.href='/admin/users/review?email='+encodeURIComponent(user.email)};actions.append(edit,review,del);tr.append(actions);rows.append(tr);
+}
+}
+$('saveUser').onclick=async()=>{
+const email=$('userEmail').value.trim().toLowerCase();
+if(!email){$('userMessage').textContent='Enter a valid email';return;}
+const response=await fetch('/api/admin/users/'+encodeURIComponent(email),{method:'PUT',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({role:$('userRole').value,tier:$('userTier').value,disabled:$('userDisabled').checked})});
+const data=await response.json();$('userMessage').textContent=response.ok?'User settings saved':(data.error||'Could not update user');if(response.ok)await loadUsers();
+};
+$('refresh').addEventListener('click',check);
+check();loadUsers().catch(e=>{$('userMessage').textContent=e.message});setInterval(()=>{if(!document.hidden)check()},30000);
+</script>
+<script src="/site-menu.js?v=1" defer></script></body></html>

@@ -4,12 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ZDX Book Studio</title>
-  <link rel="stylesheet" href="/styles.css" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" /><link rel="icon" href="/favicon.ico" sizes="any" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=multi-book-tabs-20261017" />
+  <link rel="stylesheet" href="/site-menu.css?v=1" />
 </head>
 <body>
   <header class="topbar">
     <div><span class="brand-mark">ZDX</span><strong>Book Studio</strong><span class="private-pill">PRIVATE</span></div>
-    <div class="status-row"><span id="agentStatus" class="status-dot">Core: checking</span><span id="userEmail" class="user-email"></span><button id="changePassword" class="ghost">Change password</button><button id="logout" class="ghost">Sign out</button></div>
+    <div class="status-row"><details class="site-menu"><summary aria-label="Open navigation menu">☰ Menu</summary><nav class="site-menu-panel" aria-label="Book Studio navigation"><a href="/">My books</a><a href="/guide.html">User guide</a><a href="/admin" data-admin-nav hidden>Admin dashboard</a><a href="/admin/logs" data-admin-nav hidden>Logs &amp; inference</a><a href="/admin/users/review" data-admin-nav hidden>User reviews</a><a href="/admin-guide.html" data-admin-nav hidden>Admin guide</a></nav></details><span id="agentStatus" class="status-dot">Core: checking</span><span id="userEmail" class="user-email"></span><a href="/guide.html" class="ghost" style="padding:8px 10px;color:inherit">User guide</a><button id="changePassword" class="ghost">Change password</button><button id="logout" class="ghost">Sign out</button></div>
   </header>
   <div class="shell">
     <aside class="sidebar">
@@ -22,6 +24,7 @@
     </main>
   </div>
   <dialog id="dialog"><form method="dialog" id="dialogForm"><div id="dialogBody"></div><div class="dialog-actions"><button value="cancel" class="ghost">Close</button></div></form></dialog>
-  <script src="/app.js" type="module"></script>
+  <script src="/site-menu.js?v=1" defer></script>
+  <script src="/app.js?v=multi-book-tabs-20261017" type="module"></script>
 </body>
 </html>

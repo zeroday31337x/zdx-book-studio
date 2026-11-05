@@ -7,3 +7,16 @@ data/*.tmp
 data/*.log
 .DS_Store
 npm-debug.log*
+# Never commit live book data, auth state, snapshots or manuscript files.
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
