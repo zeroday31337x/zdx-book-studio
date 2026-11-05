@@ -27,6 +27,13 @@ AgentCore currently has opt-in `TRAINING_CAPTURE_MODEL_CALLS` JSONL capture for 
 
 Canonical AgentCore implementation record: https://github.com/zeroday31337x/zdx-agent-team/blob/main/docs/research/BOOK-STUDIO-IMPLEMENTATION.md
 
-## Standing research collection policy (decision 2026-11-05)
 
-Book Studio is an ongoing AgentCore research and evaluation environment. Default collection should cover operational **metadata** (agent/workflow/model, timestamps, performance, error/retry, revision and evaluation outcomes) with privacy controls, minimization and tenant separation. Full manuscript/prompt/response retention for research or training requires informed, affirmative authorization; do not infer consent from a preselected checkbox or normal use. Research retention permission is distinct from approval to include examples in model training. The default-on metadata collection is a **target policy**, not evidence that the collector has been deployed. Existing `TRAINING_CAPTURE_MODEL_CALLS` is opt-in by environment flag and not verified enabled for Book Studio. Provide clear user-facing disclosure and an appropriate control for content research participation before activating content capture.
+## Engineering-only research policy (supersedes prior capture proposals, 2026-11-05)
+
+Book Studio is an ongoing AgentCore **engineering evaluation** environment. Collect **only non-content operational telemetry by default**: opaque event/trace IDs, component and workflow phase, agent role, provider/model, routing/fallback, token counts, latency, retries, failure categories, output length, schema/format validity, aggregate quality/evaluation scores, software versions and resource utilization. Research must assess agent orchestration and model-system performance, **not** the contents of books.
+
+**Do not retain** manuscripts, chapters, prompts, completions, writing samples, character descriptions, personal data, account IDs, book titles, source documents, or user-authored text in the engineering research store. Avoid stable book/chapter IDs in exported research data; use ephemeral pseudonymous correlation IDs with bounded retention. Never log request/response bodies, error messages containing user content, or payload hashes that could reveal or link private text.
+
+The existing AgentCore `TRAINING_CAPTURE_MODEL_CALLS` mechanism captures prompt and response content and **must remain disabled for Book Studio**. Its historical mention in this document describes an existing capability, **not an approved Book Studio data source**. No research use or training approval for user content is implied. Engineering telemetry may be analyzed for reliability and optimization, but it must not be exported as a text-model training corpus.
+
+Implementation status: this is the approved documentation policy, not proof that a content-free telemetry collector is already deployed. Audit all emitters (AgentCore, pool, direct Studio calls and humanizer), sanitize structured errors, enforce allowlisted fields and retention limits, and validate with synthetic test requests before enabling default engineering research collection.
