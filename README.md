@@ -51,3 +51,7 @@ Validation: `npm run build && npm test`; test coverage is in
 ## Canonical source and deployment
 
 This repository is the sole authoritative Book Studio source repository. The 2026-11-05 production reconciliation is documented in [docs/architecture/SOURCE-RECONCILIATION-2026-11-05.md](docs/architecture/SOURCE-RECONCILIATION-2026-11-05.md). Runtime manuscript data, SQLite databases, credentials, and user auth state remain external to Git. Do not deploy by pulling this repo over the live application directory; use a staged release with persistent-data mounts and rollback.
+
+### Architecture change documentation rule
+
+Every architecture, runtime, authentication, storage, integration or deployment change must update `SOURCE_OF_TRUTH.md`, relevant `docs/architecture/` decision records and deployment runbooks **in the same pull request/commit as the code**. Record source commit and deployment status (planned, in Git, built, staged or live), dependencies, env-key names (never values), persistence boundaries, verification, and rollback. Cross-platform changes must also update the central ZeroDriveX architecture inventory in `zeroday31337x/zerodrivex`.

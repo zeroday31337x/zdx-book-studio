@@ -11,7 +11,7 @@ Decision: 2026-11-02. Canonical GitHub repository: https://github.com/zeroday313
 ## Do not confuse with these copies
 - `/home/ubuntu/zdx-books-work` and `/home/ubuntu/book-studio-sync` are stale development copies, NOT manuscript authorities.
 - GitHub `zeroday31337x/zdx-books` is legacy, NOT the canonical Book Studio repo. Do not deploy from or push Studio changes to it.
-- The running production directory is currently not a Git checkout. Do not overwrite it by blindly cloning or pulling. First reconcile production code with the canonical repository, commit reviewed differences, back up the live database, then deploy a pinned commit.
+- The running production directory is currently not a Git checkout. Do not overwrite it by blindly cloning or pulling. Production source was reconciled into the canonical repository on 2026-11-05. Back up the live database and verify deployment dependencies before deploying a pinned commit.
 
 ## Operating rules
 1. Before a Studio operation, read this file and inspect `systemctl show zdx-book-studio-primary.service -p WorkingDirectory -p ExecStart`.
@@ -22,4 +22,4 @@ Decision: 2026-11-02. Canonical GitHub repository: https://github.com/zeroday313
 6. Record deployed Git commit, database migration version and deployment time in a release manifest; compare against the canonical GitHub repository before every deployment.
 
 ## Current consolidation status
-Canonical repo selected and documented. Production code has NOT yet been reconciled with the repo, and legacy directories have NOT been deleted. No deployment has been performed by this decision.
+Canonical source was reconciled from verified live production on 2026-11-05 and pushed to `main` as commit `1354899`. Prior main is preserved at `backup/pre-live-source-sync-20261105`. TypeScript build and all 11 current tests passed. Legacy directories remain intact; the running production Studio has not been redeployed or containerized. See `docs/architecture/SOURCE-RECONCILIATION-2026-11-05.md`.
