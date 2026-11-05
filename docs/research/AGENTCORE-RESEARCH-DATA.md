@@ -26,3 +26,7 @@ AgentCore currently has opt-in `TRAINING_CAPTURE_MODEL_CALLS` JSONL capture for 
 5. Update AgentCore research docs and the central ZeroDriveX architecture inventory with measured results and deployment status in the same changeset.
 
 Canonical AgentCore implementation record: https://github.com/zeroday31337x/zdx-agent-team/blob/main/docs/research/BOOK-STUDIO-IMPLEMENTATION.md
+
+## Standing research collection policy (decision 2026-11-05)
+
+Book Studio is an ongoing AgentCore research and evaluation environment. Default collection should cover operational **metadata** (agent/workflow/model, timestamps, performance, error/retry, revision and evaluation outcomes) with privacy controls, minimization and tenant separation. Full manuscript/prompt/response retention for research or training requires informed, affirmative authorization; do not infer consent from a preselected checkbox or normal use. Research retention permission is distinct from approval to include examples in model training. The default-on metadata collection is a **target policy**, not evidence that the collector has been deployed. Existing `TRAINING_CAPTURE_MODEL_CALLS` is opt-in by environment flag and not verified enabled for Book Studio. Provide clear user-facing disclosure and an appropriate control for content research participation before activating content capture.
