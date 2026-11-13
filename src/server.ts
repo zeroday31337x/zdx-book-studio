@@ -8,6 +8,8 @@ import { config as loadEnv } from "dotenv";
 import { z } from "zod";
 import { BookStore, seedCodebound } from "./store.js";
 import { BookAgentService } from "./agent-service.js";
+import { SETTING_DEFINITIONS, effectiveSettings, validateSettingsPatch } from "./settings.js";
+import { attachmentStatus, makeAttachment, validateAttachment } from "./series.js";
 import { previousCanonRequired, wordCount } from "./context.js";
 import type { BookProject, Character } from "./types.js";
 import { AuthStore, expiredSessionCookie, sessionCookie, sessionTokenFromCookie } from "./auth.js";
@@ -18,6 +20,16 @@ if ((process.env.JWT_SECRET || "").length < 32 && siteEnv.parsed?.JWT_SECRET) pr
 const app = express();
 const store = new BookStore();
 const agents = new BookAgentService();
+// Inference usage ledger: every metered model call lands in the store with
+// tokens, latency and rate-card cost, attributed to book/chapter/owner.
+agents.setUsageSink((event) => {
+  try { store.recordUsage(event); }
+  catch (error) { console.error("[BOOK_STUDIO_USAGE_RECORD_FAILED]", error instanceof Error ? error.message : "unknown"); }
+});
+// Platform settings live in the DB (admin-managed); env is only a fallback.
+agents.setSettingsProvider((key) => store.getSetting(key));
+// Series attachments resolve source books through the store.
+agents.setBookResolver((id) => store.get(id));
 const auth = new AuthStore();
 syncCanonChapters(store.list());
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -53,7 +65,7 @@ app.post("/api/support/chat", async (req,res) => {
     return res.json({reply:"Please don't enter card details, passwords or identity documents in chat. Payments will use secure Stripe Checkout when enabled. To sign in, use https://studio.zerodrivex.com/login.html."});
   const system=[
     "You are the public support assistant for ZeroDriveX Book Studio. Answer briefly, accurately and kindly using only these confirmed product details.",
-    "Book Studio turns an idea into a design, characters and chapter outline using Auto Generate; More Control gives manual fields. Users can provide personal writing style and a writing sample. A full-book generation workflow exists but is still undergoing end-to-end testing.",
+    "Book Studio turns an idea into a design, characters and chapter outline using Auto Generate; More Control gives manual fields. Users can provide personal writing style and a writing sample. Two production modes exist: a manual flow where the author approves each chapter, and an automated full-book pipeline where each chapter must pass the independent review gate against the book's world, characters and style rules before it joins the manuscript.",
     "Basic plan proposed price is $49.99/month; max 5 books, 30 chapters/book and target 3000 words/chapter. Premium proposed price is $99.99/month; max 25 books, 200 chapters/book and target 10000 words/chapter.",
     "CRITICAL ACCESS POLICY: Book Studio is private and invitation-only for professional writers, with 10 places in the current limited-access intake. Public self-registration is disabled. To request an account or invitation, applicants MUST email admin@support.zerodrivex.com with a short introduction to their professional writing experience and how they plan to use Book Studio. Applications are reviewed individually; acceptance is not guaranteed. Accepted applicants receive onboarding and payment instructions separately. For any question about registering, signing up, creating an account, applying or getting access, give this email and application process FIRST. Already approved users can log in at https://studio.zerodrivex.com/login.html.",
     "CRITICAL: Live Stripe payments, subscriptions, self-service signup, and automatic Cognito account provisioning are NOT active. Never claim a customer can currently buy or subscribe. The public guide is https://studio.zerodrivex.com/guide.html.",
@@ -265,7 +277,7 @@ app.get(["/", "/index.html"], (req, res) => {
 const createBookSchema = z.object({
   title: z.string().min(1).max(200), tagline: z.string().max(500).optional(), genre: z.string().max(120).optional(), tone: z.string().max(500).optional(),
   premise: z.string().max(10000).optional(), overview: z.string().max(30000).optional(), canon: z.string().max(100000).optional(),
-  chapterCount: z.number().int().min(1).max(200).optional(), movementCount: z.number().int().min(1).max(50).optional(), targetWords: z.number().int().min(1000).max(1000000).optional(), chapterTargetWords: z.number().int().min(600).max(10000).optional(), writingStyle: z.string().max(4000).optional(), writingSample: z.string().max(12000).optional()
+  chapterCount: z.number().int().min(1).max(200).optional(), movementCount: z.number().int().min(1).max(50).optional(), targetWords: z.number().int().min(1000).max(1000000).optional(), chapterTargetWords: z.number().int().min(600).max(10000).optional(), hardChapterWordCap: z.number().int().min(600).max(20000).optional(), seriesName: z.string().max(120).optional(), writingStyle: z.string().max(4000).optional(), writingSample: z.string().max(12000).optional()
 });
 const frictionSchema = z.object({
   mode: z.enum(['off', 'natural', 'my-voice', 'write-as-me', 'raw']),
@@ -314,7 +326,51 @@ app.get("/api/admin/overview", async (req, res) => {
       completedBooks: books.filter(book => book.status === "complete").length,
       canonChapters: overviewBooks.reduce((total, book) => total + book.canonChapters, 0),
     },
+    usage: store.usageTotals(),
     inference, books: overviewBooks,
+  });
+});
+
+app.get("/api/admin/settings", (req, res) => {
+  const user = (req as any).studioUser;
+  if (!user || user.role !== "admin") return res.status(403).json({ error: "admin_required" });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    definitions: SETTING_DEFINITIONS,
+    effective: effectiveSettings(store.getAllSettings()),
+    note: "Values saved here are stored in the database and take effect without a restart. Env values remain as fallback defaults. Secrets and provider API keys never live here."
+  });
+});
+
+app.put("/api/admin/settings", (req, res) => {
+  const user = (req as any).studioUser;
+  if (!user || user.role !== "admin") return res.status(403).json({ error: "admin_required" });
+  if (req.get("origin") && req.get("origin") !== `https://${req.get("host")}`) return res.status(403).json({ error: "origin_mismatch" });
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) return res.status(400).json({ error: "invalid_settings" });
+  const result = validateSettingsPatch(req.body as Record<string, unknown>);
+  if ("error" in result) return res.status(400).json({ error: "invalid_settings", message: result.error });
+  store.setSettings(result.values, user.email);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ effective: effectiveSettings(store.getAllSettings()) });
+});
+
+app.get("/api/admin/usage", (req, res) => {
+  const user = (req as any).studioUser;
+  if (!user || user.role !== "admin") return res.status(403).json({ error: "admin_required" });
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    generatedAt: new Date().toISOString(),
+    totals: store.usageTotals(),
+    byUser: store.usageByUser(),
+    byBook: store.usageByBook().map(row => ({
+      ...row,
+      title: row.dimension ? store.get(String(row.dimension))?.title || null : null,
+      ownerEmail: row.dimension ? store.get(String(row.dimension))?.ownerEmail || null : null
+    })),
+    byModel: store.usageByModel(),
+    recent: store.usageRecent(limit),
+    note: "Costs use the BOOK_STUDIO_MODEL_RATES rate card. Self-hosted inference-pool models default to $0/token; for those, tokens and latency are the resource measures."
   });
 });
 
@@ -403,11 +459,11 @@ app.get("/api/admin/users/:email/review", (req,res)=>{
  const limits=TIER_LIMITS[user.tier];
  const usage=usageFor(email);
  res.setHeader("Cache-Control","no-store");
- return res.json({user,usage,limits,remaining:{books:Math.max(0,limits.maxBooks-usage.books)},billing:{provider:"unconfigured",customerId:null},kyc:{status:"not_configured",sensitiveDocumentsStored:false},identity:{provider:"cognito",linked:user.cognitoLinked}});
+ return res.json({user,usage,limits,remaining:{books:Math.max(0,limits.maxBooks-usage.books)},inference:store.usageForUser(email),billing:{provider:"unconfigured",customerId:null},kyc:{status:"not_configured",sensitiveDocumentsStored:false},identity:{provider:"cognito",linked:user.cognitoLinked}});
 });
 app.get("/api/admin/users", (req,res) => {
   if (studioUser(req)?.role !== "admin") return res.status(403).json({error:"admin_required"});
-  return res.json({users:auth.listUsers().map(u=>({...u,usage:usageFor(u.email),limits:TIER_LIMITS[u.tier]})),plans:TIER_LIMITS});
+  return res.json({users:auth.listUsers().map(u=>({...u,usage:usageFor(u.email),inference:store.usageForUser(u.email),limits:TIER_LIMITS[u.tier]})),plans:TIER_LIMITS});
 });
 app.put("/api/admin/users/:email", (req,res) => {
   if (studioUser(req)?.role !== "admin") return res.status(403).json({error:"admin_required"});
@@ -427,7 +483,7 @@ app.delete("/api/admin/users/:email", (req,res) => {
 });
 app.get("/api/books", (req, res) => {
   res.setHeader("Cache-Control","no-store");
-  res.json(store.list().filter(book=>canUseBook(req,book)).map(book => ({ id: book.id, title: book.title, status: book.status, chapterCount: book.chapterCount, canonChapters: book.chapters.filter(ch => ch.status === "canon").length, updatedAt: book.updatedAt })));
+  res.json(store.list().filter(book=>canUseBook(req,book)).map(book => ({ id: book.id, title: book.title, status: book.status, seriesName: book.seriesName || "", chapterCount: book.chapterCount, canonChapters: book.chapters.filter(ch => ch.status === "canon").length, updatedAt: book.updatedAt })));
 });
 app.post("/api/books/auto-design", async (req, res) => {
   const parsed = z.object({
@@ -441,7 +497,7 @@ app.post("/api/books/auto-design", async (req, res) => {
     const { idea, chapterCount, chapterTargetWords, writingStyle, writingSample } = parsed.data;
     const caller=studioUser(req)!; const limits=TIER_LIMITS[caller.tier || "basic"];
     if (caller.role !== "admin" && (chapterCount > limits.maxChaptersPerBook || chapterTargetWords > limits.maxWordsPerChapter || store.list().filter(b=>b.ownerEmail===caller.email).length >= limits.maxBooks)) return res.status(403).json({error:"tier_limit_exceeded",limits});
-    const design = await agents.designBookFromIdea(idea, chapterCount, chapterTargetWords);
+    const design = await agents.designBookFromIdea(idea, chapterCount, chapterTargetWords, caller.email);
     const title = String(design.title || "Untitled Book").slice(0, 200);
     const characters: Character[] = (design.characters as any[]).slice(0, 16).map((raw, i) => ({
       id: `character-${i + 1}`, name: String(raw.name || `Character ${i + 1}`).slice(0, 200),
@@ -485,7 +541,7 @@ app.get("/api/books/:id", (req, res) => {
 });
 app.patch("/api/books/:id", (req, res) => {
   const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
-  const allowed = ["title", "tagline", "genre", "tone", "premise", "overview", "canon", "targetWords", "chapterTargetWords", "writingStyle", "writingSample", "movementCount", "status"] as const;
+  const allowed = ["title", "tagline", "genre", "tone", "premise", "overview", "canon", "targetWords", "chapterTargetWords", "hardChapterWordCap", "seriesName", "writingStyle", "writingSample", "movementCount", "status"] as const;
   for (const key of allowed) if (req.body[key] !== undefined) (book as any)[key] = req.body[key];
   res.json(store.save(book));
 });
@@ -586,6 +642,7 @@ async function processAutoBook(id: string) {
         if (review.verdict !== "PASS") continue;
         completed.approvedText = completed.draft;
         completed.status = "canon";
+        completed.productionMode = "auto";
         completed.approvedAt = new Date().toISOString();
         pushUnique(reviewed.continuity.facts, review.continuityDelta);
         pushUnique(reviewed.continuity.knowledgeState, review.knowledgeDelta);
@@ -616,6 +673,46 @@ async function processAutoBook(id: string) {
     console.error("[BOOK_AUTO_PAUSED]", JSON.stringify({bookId:id,error:e instanceof Error ? e.message : "unknown"}));
   } finally { autoRunning.delete(id); }
 }
+// ---- Series attachments: sealed prior-book canon for series building ----
+app.get("/api/books/:id/attachments", (req, res) => {
+  const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
+  res.json({
+    seriesName: book.seriesName || "",
+    attachments: (book.attachments || []).map(attachment => ({ ...attachment, status: attachmentStatus(attachment, store.get(attachment.bookId)) }))
+  });
+});
+
+app.post("/api/books/:id/attachments", (req, res) => {
+  const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
+  const sourceId = typeof req.body?.bookId === "string" ? req.body.bookId : "";
+  const source = sourceId ? store.get(sourceId) : undefined;
+  if (!source) return res.status(404).json({ error: "source_book_not_found" });
+  if ((source.ownerEmail || "") !== (book.ownerEmail || "")) return res.status(403).json({ error: "source_not_owned", message: "You can only attach your own books." });
+  const problem = validateAttachment(book, source);
+  if (problem) {
+    const messages: Record<string, string> = {
+      cannot_attach_own_book: "A book cannot be attached to itself.",
+      already_attached: "That book is already attached.",
+      source_has_no_canon: "The source book has no approved canon chapters yet — only canon can be attached.",
+      different_series: "Both books must carry the same series name before one can be attached to the other. Set the series name on both books first."
+    };
+    return res.status(400).json({ error: problem, message: messages[problem] || problem });
+  }
+  const attachment = makeAttachment(source);
+  book.attachments = [...(book.attachments || []), attachment];
+  book.updatedAt = new Date().toISOString();
+  store.save(book);
+  res.status(201).json({ ...attachment, status: "active" });
+});
+
+app.delete("/api/books/:id/attachments/:sourceId", (req, res) => {
+  const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
+  book.attachments = (book.attachments || []).filter(attachment => attachment.bookId !== req.params.sourceId);
+  book.updatedAt = new Date().toISOString();
+  store.save(book);
+  res.json({ ok: true });
+});
+
 app.post("/api/books/:id/auto-run", (req,res) => {
   const book=store.get(req.params.id);
   if (!book) return res.status(404).json({error:"book_not_found"});
@@ -750,18 +847,27 @@ app.post("/api/books/:id/chapters/:number/review", (req, res) => {
     }
   })();
 });
-app.post("/api/books/:id/chapters/:number/approve", (req, res) => {
+app.post("/api/books/:id/chapters/:number/approve", async (req, res) => {
   const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
   const chapter = chapterOf(book, req.params.number); if (!chapter) return res.status(404).json({ error: "chapter_not_found" });
   if (chapter.generationStatus === "generating" || chapter.reviewStatus === "reviewing") return res.status(409).json({ error: "chapter_task_in_progress", message: "Wait for the active task to finish before approving this chapter." });
   if (!chapter.draft.trim()) return res.status(409).json({ error: "empty_draft", message: "There is no draft to approve." });
-  chapter.approvedText = chapter.draft; chapter.status = "canon"; chapter.approvedAt = new Date().toISOString(); chapter.wordCount = wordCount(chapter.approvedText);
-  if (chapter.review?.verdict === "PASS") {
-    pushUnique(book.continuity.facts, chapter.review.continuityDelta);
-    pushUnique(book.continuity.knowledgeState, chapter.review.knowledgeDelta);
-    pushUnique(book.continuity.relationshipState, chapter.review.relationshipDelta);
+  chapter.approvedText = chapter.draft; chapter.status = "canon"; chapter.productionMode = "manual"; chapter.approvedAt = new Date().toISOString(); chapter.wordCount = wordCount(chapter.approvedText);
+  // Continuity must learn from every canon chapter. A review on record —
+  // PASS or not — describes this approved draft, so its deltas merge. With
+  // no review on record, extract the deltas from the approved text.
+  // Extraction failure never blocks a human approval; it is logged instead.
+  let deltaSource: { summary?: string; continuityDelta: string[]; knowledgeDelta: string[]; relationshipDelta: string[] } | undefined = chapter.review;
+  if (!deltaSource) {
+    try { deltaSource = await agents.extractContinuity(book, chapter.number, chapter.draft); }
+    catch (error) { console.warn("[BOOK_STUDIO_CONTINUITY_EXTRACT_FAILED]", JSON.stringify({ bookId: book.id, chapter: chapter.number, error: error instanceof Error ? error.message.slice(0, 300) : "unknown" })); }
   }
-  const approvalSummary = chapter.review?.summary?.trim() || "Human-approved without automated review.";
+  if (deltaSource) {
+    pushUnique(book.continuity.facts, deltaSource.continuityDelta);
+    pushUnique(book.continuity.knowledgeState, deltaSource.knowledgeDelta);
+    pushUnique(book.continuity.relationshipState, deltaSource.relationshipDelta);
+  }
+  const approvalSummary = chapter.review?.summary?.trim() || deltaSource?.summary?.trim() || "Human-approved without automated review.";
   book.continuity.timeline.push(`Chapter ${chapter.number}: ${approvalSummary}`);
   if (book.chapters.every(ch => ch.status === "canon")) book.status = "complete"; else book.status = "production";
   try { writeCanonChapter(book, chapter); res.json(store.save(book)); }
@@ -780,3 +886,9 @@ app.get("/{*splat}", (req, res) => { if (!studioUser(req)) return res.redirect(3
 const port = Number(process.env.BOOK_STUDIO_PORT || 3210);
 const host = process.env.BOOK_STUDIO_HOST || "127.0.0.1";
 app.listen(port, host, () => console.log(`ZDX Book Studio listening on http://${host}:${port}`));
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    try { store.flushLegacyMirror(); } catch { /* shutdown proceeds regardless */ }
+    process.exit(0);
+  });
+}

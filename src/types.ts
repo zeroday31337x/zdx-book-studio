@@ -44,6 +44,10 @@ export interface Chapter {
   generationError?: string;
   generatedAt?: string;
   approvedAt?: string;
+  /** How this chapter entered canon: the manual human gate, or the automated pipeline's review PASS. */
+  productionMode?: "manual" | "auto";
+  /** Sealed series attachments (book + canon hash) this chapter's generation was built against. */
+  builtAgainst?: Array<{ bookId: string; canonHash: string }>;
 }
 
 export interface ContinuityState {
@@ -54,10 +58,24 @@ export interface ContinuityState {
   knowledgeState: string[];
 }
 
+export interface SeriesAttachment {
+  bookId: string;
+  title: string;
+  /** SHA-256 over the source book's canon chapters at attach time. The seal pins the version this book builds against. */
+  canonHash: string;
+  canonChapters: number;
+  canonWords: number;
+  attachedAt: string;
+}
+
 export interface BookProject {
   frictionWrite?: import('./frictionwrite.js').FrictionConfig;
   id: string;
   title: string;
+  /** Books sharing a series name (case-insensitive) form a series; only same-series books can be attached. */
+  seriesName?: string;
+  /** Sealed prior-book canon attached for series building. Read-only reference; see series.ts. */
+  attachments?: SeriesAttachment[];
   ownerEmail?: string;
   autoRun?: { status: "running" | "paused" | "complete"; nextChapter: number; lastError?: string; updatedAt: string };
   tagline: string;
@@ -70,6 +88,8 @@ export interface BookProject {
   movementCount: number;
   targetWords: number;
   chapterTargetWords?: number;
+  /** Absolute per-chapter hard word cap. Null/undefined = derive from the chapter target (see chapterLengthBands). */
+  hardChapterWordCap?: number;
   writingStyle?: string;
   writingSample?: string;
   status: "design" | "production" | "complete";

@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export type StudioRole = "admin" | "user";
@@ -12,6 +12,13 @@ type AuthData = { users: UserRecord[]; sessions: SessionRecord[] };
 const SESSION_HOURS = Math.max(1, Number(process.env.BOOK_STUDIO_SESSION_HOURS || 12));
 
 export class AuthStore {
+  /** Parsed-file cache keyed by mtime: authenticate() runs on every API
+   * request, and re-reading + rewriting the JSON file each time was a
+   * scaling wall. Reads now serve from memory unless the file changed,
+   * and writes happen only when the data actually changed. */
+  private cacheMtimeMs = -1;
+  private cacheData?: AuthData;
+
   constructor(private filePath = process.env.BOOK_STUDIO_AUTH_DATA || path.resolve("data/auth.json")) {}
 
   hasUsers() { return this.read().users.length > 0; }
@@ -43,12 +50,14 @@ export class AuthStore {
   authenticate(token: string | undefined): StudioUser | null {
     if (!token) return null;
     const data = this.read();
+    const sessionsBefore = data.sessions.length;
     this.prune(data);
     const digest = tokenDigest(token);
     const session = data.sessions.find(item => safeEqual(item.tokenHash, digest));
-    if (!session) { this.write(data); return null; }
-    const user = data.users.find(item => item.email === session.email);
-    this.write(data);
+    const user = session ? data.users.find(item => item.email === session.email) : undefined;
+    // Persist only when pruning actually expired a session; a plain
+    // authenticated read must not rewrite the file.
+    if (data.sessions.length !== sessionsBefore) this.write(data);
     return user && !user.disabled ? publicUser(user) : null;
   }
 
@@ -130,8 +139,15 @@ export class AuthStore {
   private read(): AuthData {
     if (!existsSync(this.filePath)) return { users: [], sessions: [] };
     try {
+      const mtimeMs = statSync(this.filePath).mtimeMs;
+      if (this.cacheData && this.cacheMtimeMs === mtimeMs) {
+        return JSON.parse(JSON.stringify(this.cacheData)) as AuthData;
+      }
       const parsed = JSON.parse(readFileSync(this.filePath, "utf8"));
-      return { users: Array.isArray(parsed?.users) ? parsed.users : [], sessions: Array.isArray(parsed?.sessions) ? parsed.sessions : [] };
+      const data: AuthData = { users: Array.isArray(parsed?.users) ? parsed.users : [], sessions: Array.isArray(parsed?.sessions) ? parsed.sessions : [] };
+      this.cacheMtimeMs = mtimeMs;
+      this.cacheData = JSON.parse(JSON.stringify(data)) as AuthData;
+      return data;
     } catch { return { users: [], sessions: [] }; }
   }
 
@@ -140,6 +156,10 @@ export class AuthStore {
     const temp = `${this.filePath}.${process.pid}.tmp`;
     writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     renameSync(temp, this.filePath);
+    try {
+      this.cacheMtimeMs = statSync(this.filePath).mtimeMs;
+      this.cacheData = JSON.parse(JSON.stringify(data)) as AuthData;
+    } catch { this.cacheMtimeMs = -1; this.cacheData = undefined; }
   }
 }
 
