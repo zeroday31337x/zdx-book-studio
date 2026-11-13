@@ -29,7 +29,6 @@ Open `http://localhost:3210` for local-only development. For network exposure, p
 The default core path points to the existing sibling `/home/zdxadmin/zdx-agent-team` installation. Provider credentials are loaded from the agent core `.env`; no keys are copied into this repository. Runtime manuscript data, authentication records, sessions, and `.env` files are excluded from Git.
 
 ## Production review envelope validation (October 2026)
-
 The independent reviewer must return a complete JSON object containing `verdict`,
 `notes`, `summary`, `continuityDelta`, `knowledgeDelta`,
 `relationshipDelta`, and `originalityFlags`. The response is validated
@@ -47,6 +46,18 @@ verdict or structured continuity metadata.
 
 Validation: `npm run build && npm test`; test coverage is in
 `tests/review-parser.test.ts`.
+
+## Inference usage metering (2026-11-12)
+
+Every model call (design, write, continuation, length repair, review, continuity extraction, FrictionWrite, local humanizer) is recorded in the `usage_events` table of the book database: owner, book, chapter, operation, provider, model, real token counts from the provider response (estimated and flagged only when a provider returns none), latency, and cost. Cost uses the `BOOK_STUDIO_MODEL_RATES` rate card (JSON env); self-hosted inference-pool models default to $0/token, so tokens and latency are the resource measures there. The admin dashboard (`/admin`) shows totals and per-user / per-book / per-model breakdowns plus recent calls; data starts accumulating at deployment and is not backfilled.
+
+The review gate can run on an independent model: set the reviewer model to a different model served by the inference pool. Studio's model traffic goes only to the ZDX inference pool: you designate the model, and provider selection plus key rotation happen inside the pool (12 providers registered) — there is no direct-provider path from Studio. Chapter length policy is two-tier: a preferred band of ±20% of target is advisory (an exception can be earned at review), while hard bounds (0.6× floor; `hardChapterWordCap` or 1.3× cap) are enforced in code. See `docs/architecture/USAGE-LEDGER-AND-SCALE-2026-11-12.md`.
+
+Product settings — reviewer route, rate card, token budgets, request timeout, mirror interval — live in the database (`app_settings`) and are managed in the admin dashboard's Platform settings panel; they take effect without a restart. Resolution is DB setting > env var > built-in default, so the env vars in `.env.example` are fallback defaults. Env remains the home of bootstrap wiring and secrets only.
+
+## Series books
+
+Books that share a **series name** form a series. A later book can attach an earlier same-series book: its approved canon (never drafts) is sealed by a SHA-256 hash at attach time and feeds chapter generation and the review gate as read-only reference — world facts, timeline, and per-character knowledge carry-over (a character carries exactly what they experienced or learned in the prior book). If the earlier book's canon changes, the attachment goes stale and feeds nothing until re-attached; each generated chapter records the seals it was built against. Manage attachments in the book overview, or via `GET/POST/DELETE /api/books/:id/attachments`.
 
 ## Canonical source and deployment
 

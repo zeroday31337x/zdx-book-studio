@@ -53,5 +53,22 @@ export async function applyFrictionWrite(
   if (!output || output.length < draft.length * 0.65 || output.length > draft.length * 1.5) {
     throw new Error('FrictionWrite revision failed basic length validation');
   }
+  // Deterministic preservation check: proper names and figures in the draft
+  // must survive a voice revision. Length alone cannot catch a revision that
+  // quietly drops a canon name or changes a number.
+  const factsOf = (text: string) => {
+    const facts = new Set<string>();
+    for (const match of text.matchAll(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/g)) facts.add(match[0]);
+    for (const match of text.matchAll(/\b\d[\d,]*(?:\.\d+)?\b/g)) facts.add(match[0]);
+    return facts;
+  };
+  const draftFacts = factsOf(draft);
+  if (draftFacts.size) {
+    const revisedFacts = factsOf(output);
+    const missing = [...draftFacts].filter(fact => !revisedFacts.has(fact));
+    if (missing.length > Math.max(1, Math.floor(draftFacts.size * 0.1))) {
+      throw new Error(`FrictionWrite revision dropped draft facts: ${missing.slice(0, 5).join(', ')}`);
+    }
+  }
   return output;
 }

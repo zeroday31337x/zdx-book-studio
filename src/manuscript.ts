@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { BookProject, Chapter, Character } from "./types.js";
 
@@ -63,23 +63,24 @@ export function writeCanonChapter(book: BookProject, chapter: Chapter) {
   return target;
 }
 
+/**
+ * Prompt-assembly reads are DB-first by construction: the BookProject object
+ * loaded from SQLite is the single source of truth, so these render from the
+ * object. The on-disk manuscript files are a human-readable mirror written
+ * by syncBookFiles on save — never an input that can override the database.
+ */
 export function readBookDocument(book: BookProject) {
-  const filePath = path.join(bookDirectory(book), "book.md");
-  return existsSync(filePath) ? readFileSync(filePath, "utf8") : renderBookFile(book);
+  return renderBookFile(book);
 }
 
 export function readContinuityDocument(book: BookProject) {
-  const filePath = path.join(bookDirectory(book), "continuity.md");
-  return existsSync(filePath) ? readFileSync(filePath, "utf8") : renderContinuityFile(book);
+  return renderContinuityFile(book);
 }
 
 export function readCharacterDocument(book: BookProject, character: Character, includePrivate = true) {
-  const filePath = path.join(bookDirectory(book), "characters", `${slug(character.id)}.md`);
-  if (includePrivate && existsSync(filePath)) return readFileSync(filePath, "utf8");
   return renderCharacterFile(character, includePrivate);
 }
 
 export function readChapterDocument(book: BookProject, chapter: Chapter) {
-  const filePath = path.join(bookDirectory(book), "chapters", chapterFileName(chapter));
-  return existsSync(filePath) ? readFileSync(filePath, "utf8") : renderChapterFile(chapter);
+  return renderChapterFile(chapter);
 }

@@ -27,9 +27,32 @@ table{border-collapse:collapse;width:100%;min-width:550px}td,th{padding:10px;bor
 <article><span class="muted">Completed projects</span><strong id="completed">—</strong></article>
 <article><span class="muted">Canonical chapters</span><strong id="canon">—</strong></article>
 </div>
+<div class="grid">
+<article><span class="muted">Model calls</span><strong id="uCalls">—</strong></article>
+<article><span class="muted">Input tokens</span><strong id="uIn">—</strong></article>
+<article><span class="muted">Output tokens</span><strong id="uOut">—</strong></article>
+<article><span class="muted">Est. inference cost</span><strong id="uCost">—</strong></article>
+</div>
 <section class="panel"><h2>Inference and workers</h2><p id="inference">Checking shared ZDX inference…</p><p class="muted" id="updated"></p></section>
 <section class="panel" style="margin-top:18px"><h2>Current book inventory</h2><div class="tableWrap">
 <table><thead><tr><th>Project</th><th>Status</th><th>Approved / Total</th><th>Last update</th></tr></thead><tbody id="books"></tbody></table></div></section>
+<section class="panel" style="margin-top:18px"><h2>Usage &amp; inference cost</h2>
+<p class="muted">Every model call in the pipeline (write, continuation, length repair, review, FrictionWrite, design) is metered with real provider token counts, latency, and rate-card cost. Costs use the configured rate card; self-hosted inference-pool models default to $0/token, so for pool models the tokens and latency are the resource measures. Tracking starts when this build is deployed; earlier production is not backfilled.</p>
+<p id="usageMessage" role="status"></p>
+<h3>By user</h3>
+<div class="tableWrap"><table><thead><tr><th>User</th><th>Calls</th><th>Errors</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th><th>Est. cost</th><th>Avg latency</th></tr></thead><tbody id="usageUsers"></tbody></table></div>
+<h3>By book</h3>
+<div class="tableWrap"><table><thead><tr><th>Book</th><th>Owner</th><th>Calls</th><th>Total tokens</th><th>Est. cost</th><th>Avg latency</th></tr></thead><tbody id="usageBooks"></tbody></table></div>
+<h3>By model</h3>
+<div class="tableWrap"><table><thead><tr><th>Provider / model</th><th>Calls</th><th>Total tokens</th><th>Est. cost</th></tr></thead><tbody id="usageModels"></tbody></table></div>
+<h3>Recent model calls</h3>
+<div class="tableWrap"><table><thead><tr><th>Time</th><th>Operation</th><th>Book</th><th>Chapter</th><th>Model</th><th>Tokens in / out</th><th>Est. cost</th><th>Latency</th><th>Status</th></tr></thead><tbody id="usageRecent"></tbody></table></div>
+</section>
+<section class="panel" style="margin-top:18px"><h2>Platform settings</h2>
+<p class="muted">Product options live in the database and take effect without a restart or file edits. Where a value comes from is shown beside each field: <strong>db</strong> (saved here), <strong>env</strong> (server fallback), <strong>default</strong> (built in). Secrets and provider API keys never live here; they stay in the server environment.</p>
+<div id="settingsForm"></div>
+<p><button id="saveSettings" type="button">Save settings</button> <span id="settingsMessage" role="status"></span></p>
+</section>
 <section class="panel" style="margin-top:18px"><h2>Users & subscription tiers</h2>
 <p class="muted">Plans: Basic $49.99/month (5 books, 30 chapters/book, 3,000 words/chapter); Premium $99.99/month (25 books, 200 chapters/book, 10,000 words/chapter). Pricing is informational; no billing is activated. Existing books are preserved if an account is disabled or removed.</p>
 <div class="field"><label>User email <input id="userEmail" type="email" placeholder="reader@example.com" autocomplete="off"></label> <label>Role <select id="userRole"><option value="user">Reader</option><option value="admin">Administrator</option></select></label> <label>Tier <select id="userTier"><option value="basic">Basic</option><option value="premium">Premium</option></select></label> <label><input type="checkbox" id="userDisabled"> Disabled</label> <button id="saveUser" type="button">Create / update user</button></div>
@@ -40,6 +63,27 @@ table{border-collapse:collapse;width:100%;min-width:550px}td,th{padding:10px;bor
 </main><footer>Private administrative interface. Keep manuscript and customer data inside authenticated systems. <a href="https://zerodrivex.com/privacy-policy">Privacy policy</a></footer>
 <script>
 const $=id=>document.getElementById(id);
+const fmtNum=n=>Number(n||0).toLocaleString('en-US');
+const fmtCost=n=>'$'+Number(n||0).toFixed(4);
+const fmtMs=n=>n>=1000?(n/1000).toFixed(1)+'s':Math.round(n)+'ms';
+function fillRows(tbodyId,rows,cells){
+ const tbody=$(tbodyId);tbody.replaceChildren();
+ for(const row of rows){const tr=document.createElement('tr');for(const value of cells(row)){const td=document.createElement('td');td.textContent=String(value);tr.append(td);}tbody.append(tr);}
+ if(!rows.length){const tr=document.createElement('tr');const td=document.createElement('td');td.textContent='No metered model calls yet.';tr.append(td);tbody.append(tr);}
+}
+async function loadUsage(){
+ try{
+ const res=await fetch('/api/admin/usage?limit=50',{credentials:'same-origin',cache:'no-store'});
+ if(!res.ok)throw new Error('Usage data unavailable');
+ const d=await res.json();
+ fillRows('usageUsers',d.byUser||[],r=>[r.dimension||'(unassigned)',fmtNum(r.calls),fmtNum(r.errors),fmtNum(r.inputTokens),fmtNum(r.outputTokens),fmtNum(r.totalTokens),fmtCost(r.costUsd),r.calls?fmtMs(r.latencyMs/r.calls):'—']);
+ fillRows('usageBooks',d.byBook||[],r=>[r.title||'(book design / unassigned)',r.ownerEmail||'—',fmtNum(r.calls),fmtNum(r.totalTokens),fmtCost(r.costUsd),r.calls?fmtMs(r.latencyMs/r.calls):'—']);
+ fillRows('usageModels',d.byModel||[],r=>[r.dimension||'—',fmtNum(r.calls),fmtNum(r.totalTokens),fmtCost(r.costUsd)]);
+ const titles={};for(const b of d.byBook||[])if(b.dimension)titles[b.dimension]=b.title;
+ fillRows('usageRecent',d.recent||[],r=>[new Date(r.ts).toLocaleString(),r.operation,r.bookId?(titles[r.bookId]||r.bookId):'—',r.chapterNumber??'—',r.model,fmtNum(r.inputTokens)+' / '+fmtNum(r.outputTokens)+(r.tokensEstimated?' (est.)':''),fmtCost(r.costUsd),fmtMs(r.latencyMs),r.status]);
+ $('usageMessage').textContent='Updated '+new Date(d.generatedAt).toLocaleString();
+ }catch(e){$('usageMessage').textContent=String(e.message||e);}
+}
 async function check(){
 $('message').textContent='Refreshing data…';
 try{
@@ -50,6 +94,7 @@ $('total').textContent=data.summary.totalBooks;
 $('active').textContent=data.summary.activeBooks;
 $('completed').textContent=data.summary.completedBooks;
 $('canon').textContent=data.summary.canonChapters;
+if(data.usage){$('uCalls').textContent=fmtNum(data.usage.calls);$('uIn').textContent=fmtNum(data.usage.inputTokens);$('uOut').textContent=fmtNum(data.usage.outputTokens);$('uCost').textContent=fmtCost(data.usage.costUsd);}
 $('inference').textContent=data.inference?.status==='ready'?'Pool online · '+(data.inference.activeModel||'model unspecified'):'Pool unavailable or not configured';
 $('updated').textContent='Updated '+new Date(data.generatedAt).toLocaleString();
 $('books').replaceChildren();
@@ -68,7 +113,7 @@ if(!response.ok)throw new Error('User management unavailable');
 const data=await response.json();const rows=$('users');rows.replaceChildren();
 for(const user of data.users){
  const tr=document.createElement('tr');
- for(const value of [user.email,user.role,user.tier,user.disabled?'Disabled':'Enabled',user.cognitoLinked?'Linked':'Not linked',user.usage.books+' / '+user.limits.maxBooks+' books · '+user.usage.chaptersGenerated+' generated']){
+ for(const value of [user.email,user.role,user.tier,user.disabled?'Disabled':'Enabled',user.cognitoLinked?'Linked':'Not linked',user.usage.books+' / '+user.limits.maxBooks+' books · '+user.usage.chaptersGenerated+' generated'+(user.inference?' · '+fmtNum(user.inference.totalTokens)+' tokens · '+fmtCost(user.inference.costUsd):'')]){
    const td=document.createElement('td');td.textContent=value;tr.append(td);
  }
  const actions=document.createElement('td');
@@ -89,7 +134,41 @@ if(!email){$('userMessage').textContent='Enter a valid email';return;}
 const response=await fetch('/api/admin/users/'+encodeURIComponent(email),{method:'PUT',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({role:$('userRole').value,tier:$('userTier').value,disabled:$('userDisabled').checked})});
 const data=await response.json();$('userMessage').textContent=response.ok?'User settings saved':(data.error||'Could not update user');if(response.ok)await loadUsers();
 };
-$('refresh').addEventListener('click',check);
-check();loadUsers().catch(e=>{$('userMessage').textContent=e.message});setInterval(()=>{if(!document.hidden)check()},30000);
+async function loadSettings(){
+ try{
+ const res=await fetch('/api/admin/settings',{credentials:'same-origin',cache:'no-store'});
+ if(!res.ok)throw new Error('Settings unavailable');
+ const d=await res.json();
+ const effective={};for(const e of d.effective)effective[e.key]=e;
+ const form=$('settingsForm');form.replaceChildren();
+ for(const def of d.definitions){
+  const eff=effective[def.key]||{value:def.defaultValue,source:'default'};
+  const wrap=document.createElement('div');wrap.className='field';wrap.style.margin='10px 0';
+  const label=document.createElement('label');label.textContent=def.label+' ';
+  let input;
+  if(def.kind==='json'){
+   input=document.createElement('textarea');input.rows=3;input.style.width='100%';input.value=eff.value||'';
+   input.placeholder='{"groq:llama-3.3-70b": {"inputPer1M": 0.59, "outputPer1M": 0.79}}';
+  } else {
+   input=document.createElement('input');input.type=def.kind==='number'?'number':'text';input.value=eff.value??'';
+   if(def.kind==='number'){if(def.min!==undefined)input.min=def.min;if(def.max!==undefined)input.max=def.max;}
+  }
+  input.id='setting-'+def.key;input.dataset.key=def.key;
+  const badge=document.createElement('span');badge.className='muted';badge.textContent=' ('+eff.source+')';
+  const help=document.createElement('div');help.className='muted';help.textContent=def.help;
+  label.append(input,badge);wrap.append(label,help);form.append(wrap);
+ }
+ }catch(e){$('settingsMessage').textContent=String(e.message||e);}
+}
+$('saveSettings').onclick=async()=>{
+ const patch={};
+ for(const el of document.querySelectorAll('[data-key]'))patch[el.dataset.key]=el.value;
+ const res=await fetch('/api/admin/settings',{method:'PUT',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(patch)});
+ const d=await res.json();
+ $('settingsMessage').textContent=res.ok?'Settings saved — they take effect now.':(d.message||d.error||'Could not save settings');
+ if(res.ok)await loadSettings();
+};
+$('refresh').addEventListener('click',()=>{check();loadUsage();});
+check();loadUsage();loadSettings();loadUsers().catch(e=>{$('userMessage').textContent=e.message});setInterval(()=>{if(!document.hidden){check();loadUsage();}},30000);
 </script>
 <script src="/site-menu.js?v=1" defer></script></body></html>
