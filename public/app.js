@@ -288,7 +288,21 @@ async function editCharacter(id) {
   $("dialog").showModal(); $("saveCharacter").onclick=async()=>{try{await api(`/api/books/${state.book.id}/characters/${id}`,{method:"PATCH",body:JSON.stringify({name:$("dc-name").value,guild:$("dc-guild").value,publicProfile:$("dc-public").value,worldview:$("dc-worldview").value,wound:$("dc-wound").value,strength:$("dc-strength").value,blindSpot:$("dc-blind").value,voice:$("dc-voice").value,privateKnowledge:$("dc-private").value})});$("dialog").close();await openBook(state.book.id);}catch(error){alert(error.message)}};
 }
 function dialogField(id,label,value,area=false){return `<div class="field"><label>${label}</label>${area?`<textarea id="${id}">${esc(value)}</textarea>`:`<input id="${id}" value="${esc(value)}" />`}</div>`;}
-async function addCharacter(){const name=prompt("Character name");if(!name)return;const guild=prompt("Guild / faction")||"";try{await api(`/api/books/${state.book.id}/characters`,{method:"POST",body:JSON.stringify({name,guild,role:"supporting"})});await openBook(state.book.id);}catch(error){alert(error.message)}}
+async function addCharacter(){
+  const body=$("dialogBody");
+  body.innerHTML=`<h2>Add character</h2>${dialogField("dc-name","Name","")}${dialogField("dc-guild","Guild / faction","")}<div class="field"><label>Role</label><select id="dc-role"><option value="supporting" selected>Supporting</option><option value="protagonist">Protagonist (POV)</option><option value="antagonist">Antagonist</option></select></div>${dialogField("dc-public","Public profile","",true)}${dialogField("dc-worldview","Worldview","",true)}${dialogField("dc-wound","Wound","",true)}${dialogField("dc-strength","Strength","",true)}${dialogField("dc-blind","Blind spot","",true)}${dialogField("dc-voice","Voice specification","",true)}${dialogField("dc-private","Private knowledge","",true)}<div id="addCharacterError" class="error" role="alert"></div><button type="button" id="createCharacter">Add character</button>`;
+  $("dialog").showModal();
+  $("dc-name").focus();
+  $("createCharacter").onclick=async()=>{
+    const name=$("dc-name").value.trim();
+    if(!name){$("addCharacterError").textContent="Enter a character name.";return;}
+    const button=$("createCharacter"); button.disabled=true; $("addCharacterError").textContent="";
+    try{
+      await api(`/api/books/${state.book.id}/characters`,{method:"POST",body:JSON.stringify({name,guild:$("dc-guild").value.trim(),role:$("dc-role").value,publicProfile:$("dc-public").value,worldview:$("dc-worldview").value,wound:$("dc-wound").value,strength:$("dc-strength").value,blindSpot:$("dc-blind").value,voice:$("dc-voice").value,privateKnowledge:$("dc-private").value})});
+      $("dialog").close(); state.tab="characters"; await openBook(state.book.id);
+    }catch(error){$("addCharacterError").textContent=error.message; button.disabled=false;}
+  };
+}
 
 async function importOutline(){
   $("dialogBody").innerHTML=`<h2>Import chapter structure</h2><p class="muted">Paste exactly ${state.book.chapterCount} paragraphs, one per chapter, separated by blank lines. Leading chapter numbers are removed automatically.</p><div class="field"><textarea id="outlineText" class="tall"></textarea></div><button type="button" id="applyOutline">Apply outline</button>`;$("dialog").showModal();
