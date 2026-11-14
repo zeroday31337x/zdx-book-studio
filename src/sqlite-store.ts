@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { BookProject, Character, Chapter, ContinuityState } from "./types.js";
+import type { AuthorProfile, BookProject, Character, Chapter, ContinuityState } from "./types.js";
 import type { UsageEvent, UsageEventInput } from "./usage.js";
 import { syncBookFiles } from "./manuscript.js";
 
@@ -67,11 +67,54 @@ export class SqliteBookStore {
       CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_events(ts);
       CREATE INDEX IF NOT EXISTS idx_usage_owner ON usage_events(owner_email);
       CREATE INDEX IF NOT EXISTS idx_usage_book ON usage_events(book_id);
+      CREATE TABLE IF NOT EXISTS author_profiles (
+        id TEXT PRIMARY KEY,
+        owner_email TEXT NOT NULL,
+        label TEXT NOT NULL,
+        byline TEXT NOT NULL,
+        bio TEXT NOT NULL,
+        website TEXT NOT NULL DEFAULT '',
+        contact_email TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_author_profiles_owner ON author_profiles(owner_email, updated_at);
       CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY, value TEXT NOT NULL,
         updated_at TEXT NOT NULL, updated_by TEXT NOT NULL DEFAULT ''
       );
     `);
+  }
+
+  // Every query is restricted to the current tenant.
+  listAuthorProfiles(ownerEmail: string): AuthorProfile[] {
+    return (this.db.prepare("SELECT * FROM author_profiles WHERE owner_email = ? ORDER BY updated_at DESC").all(ownerEmail.toLowerCase()) as unknown as Array<Record<string,string>>).map(row => ({
+      id: row.id, ownerEmail: row.owner_email, label: row.label, byline: row.byline,
+      bio: row.bio, website: row.website, contactEmail: row.contact_email,
+      createdAt: row.created_at, updatedAt: row.updated_at
+    }));
+  }
+
+  getAuthorProfile(ownerEmail: string, id: string): AuthorProfile | undefined {
+    return this.listAuthorProfiles(ownerEmail).find(profile => profile.id === id);
+  }
+
+  createAuthorProfile(ownerEmail: string, input: Pick<AuthorProfile,"label" | "byline" | "bio" | "website" | "contactEmail">): AuthorProfile {
+    const now = new Date().toISOString(), id = crypto.randomUUID();
+    this.db.prepare("INSERT INTO author_profiles(id,owner_email,label,byline,bio,website,contact_email,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+      .run(id, ownerEmail.toLowerCase(), input.label, input.byline, input.bio, input.website, input.contactEmail, now, now);
+    return this.getAuthorProfile(ownerEmail, id)!;
+  }
+
+  updateAuthorProfile(ownerEmail: string, id: string, input: Pick<AuthorProfile,"label" | "byline" | "bio" | "website" | "contactEmail">): AuthorProfile | undefined {
+    const result = this.db.prepare("UPDATE author_profiles SET label=?,byline=?,bio=?,website=?,contact_email=?,updated_at=? WHERE id=? AND owner_email=?")
+      .run(input.label, input.byline, input.bio, input.website, input.contactEmail, new Date().toISOString(), id, ownerEmail.toLowerCase());
+    return result.changes ? this.getAuthorProfile(ownerEmail, id) : undefined;
+  }
+
+  deleteAuthorProfile(ownerEmail: string, id: string): boolean {
+    const result = this.db.prepare("DELETE FROM author_profiles WHERE id=? AND owner_email=?").run(id, ownerEmail.toLowerCase());
+    return result.changes > 0;
   }
 
   // ---- Platform settings (DB-first, env is only a fallback default) ----

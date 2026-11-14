@@ -1,4 +1,4 @@
-const state = { user: null, books: [], book: null, openBooks: (() => { try { return JSON.parse(localStorage.getItem("zdx-book-studio-open-books") || "[]"); } catch { return []; } })(), tab: "overview", chapter: Number(sessionStorage.getItem("zdx-book-studio-chapter") || 1) };
+const state = { user: null, books: [], authorProfiles: [], book: null, openBooks: (() => { try { return JSON.parse(localStorage.getItem("zdx-book-studio-open-books") || "[]"); } catch { return []; } })(), tab: "overview", chapter: Number(sessionStorage.getItem("zdx-book-studio-chapter") || 1) };
 let reviewPollTimer = null;
 const $ = id => document.getElementById(id);
 const esc = value => String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
@@ -21,6 +21,7 @@ async function api(url, options = {}) {
 async function refresh() {
   try {
     state.books = await api("/api/books");
+    state.authorProfiles = await api("/api/author-profiles");
     renderBookList();
     if (state.book) await openBook(state.book.id);
     else if (state.books.length) await openBook(state.books[0].id);
@@ -143,7 +144,35 @@ function taskStateBlock(chapter) {
 
 function reviewBlock(review) { if (!review) return ""; return `<div class="review ${review.verdict === "PASS" ? "" : "fail"}"><strong>${esc(review.verdict)}</strong><p>${esc(review.summary)}</p>${review.notes?.length?`<ul>${review.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:""}${review.originalityFlags?.length?`<p><strong>Originality flags:</strong> ${esc(review.originalityFlags.join(" · "))}</p>`:""}</div>`; }
 
-function manuscriptPanel(b) { const canon=b.chapters.filter(ch=>ch.status==="canon"); return `<div class="card"><h2>Canonical manuscript</h2><p class="muted">Only human-approved Canon chapters are assembled here. ${canon.length}/${b.chapterCount} chapters currently included.</p><button id="loadManuscript" ${!canon.length?"disabled":""}>Load manuscript</button> <button id="downloadManuscript" ${!canon.length?"disabled":""}>Download manuscript (.md)</button><textarea id="manuscriptText" class="tall" style="width:100%;min-height:60vh;margin-top:14px" readonly></textarea></div>`; }
+function defaultFrontMatterUI() {
+  return {authorProfileId:null,copyrightPage:{mode:"default",year:new Date().getFullYear(),holder:"",customText:""},dedicationPage:{mode:"default",dedicatee:"",customText:""},preface:"",acknowledgments:""};
+}
+function manuscriptPanel(b) {
+  const canon=b.chapters.filter(ch=>ch.status==="canon"), fm=b.frontMatter||defaultFrontMatterUI();
+  const profiles=state.authorProfiles||[];
+  const modeOptions=(current)=>[["off","Omit page"],["default","Use default template"],["custom","Use my own text"]].map(([id,label])=>`<option value="${id}" ${current===id?"selected":""}>${label}</option>`).join("");
+  return `<div class="card"><h2>Final manuscript · front & back matter</h2>
+  <p class="muted">Use a reusable author page from your account. Copyright and dedication can use the default templates or your own wording. Existing books remain unchanged until you save these settings.</p>
+  <div class="field"><label for="fmAuthor">About the Author page</label><select id="fmAuthor"><option value="">No author page</option>${profiles.map(profile=>`<option value="${esc(profile.id)}" ${fm.authorProfileId===profile.id?"selected":""}>${esc(profile.label)} — ${esc(profile.byline)}</option>`).join("")}</select></div>
+  <div class="actions"><button type="button" class="ghost" id="fmAddAuthor">Create author page</button><button type="button" class="ghost" id="fmEditAuthor" ${!fm.authorProfileId?"disabled":""}>Edit selected</button><button type="button" class="ghost" id="fmDeleteAuthor" ${!fm.authorProfileId?"disabled":""}>Delete selected</button></div>
+  <div class="grid2"><div class="card"><h3>Copyright page</h3>
+   <div class="field"><label for="fmCopyrightMode">Template</label><select id="fmCopyrightMode">${modeOptions(fm.copyrightPage.mode)}</select></div>
+   <div class="field"><label for="fmCopyrightYear">Copyright year</label><input id="fmCopyrightYear" type="number" min="1000" max="3000" value="${esc(fm.copyrightPage.year)}"></div>
+   <div class="field"><label for="fmCopyrightHolder">Copyright holder (optional when an author profile is selected)</label><input id="fmCopyrightHolder" maxlength="250" value="${esc(fm.copyrightPage.holder)}" placeholder="Full legal name or organization"></div>
+   <div class="field"><label for="fmCopyrightCustom">Custom copyright page</label><textarea id="fmCopyrightCustom">${esc(fm.copyrightPage.customText)}</textarea></div>
+   <p class="muted">You are responsible for confirming copyright ownership and any required acknowledgments or notices.</p></div>
+   <div class="card"><h3>Dedication page</h3>
+   <div class="field"><label for="fmDedicationMode">Template</label><select id="fmDedicationMode">${modeOptions(fm.dedicationPage.mode)}</select></div>
+   <div class="field"><label for="fmDedicatee">Dedicate this book to (fill in the name)</label><input id="fmDedicatee" maxlength="500" value="${esc(fm.dedicationPage.dedicatee)}" placeholder="Name or group"></div>
+   <p class="muted">Default: Dedicated to [Name]. Leave the name empty to omit the dedication.</p>
+   <div class="field"><label for="fmDedicationCustom">Custom dedication page</label><textarea id="fmDedicationCustom">${esc(fm.dedicationPage.customText)}</textarea></div></div></div>
+  <div class="field"><label for="fmPreface">Optional preface / author's note (before chapters)</label><textarea id="fmPreface">${esc(fm.preface)}</textarea></div>
+  <div class="field"><label for="fmAcknowledgments">Optional acknowledgments (after chapters)</label><textarea id="fmAcknowledgments">${esc(fm.acknowledgments)}</textarea></div>
+  <div class="actions"><button type="button" id="saveFrontMatter">Save book pages</button><span role="status" id="fmMessage"></span></div></div>
+  <div class="card"><h2>Canonical manuscript</h2><p class="muted">Only approved Canon chapters appear in the export. ${canon.length}/${b.chapterCount} chapters currently included.</p>
+  <button id="loadManuscript" ${!canon.length?"disabled":""}>Load manuscript</button> <button id="downloadManuscript" ${!canon.length?"disabled":""}>Download manuscript (.md)</button>
+  <textarea id="manuscriptText" class="tall" style="width:100%;min-height:60vh;margin-top:14px" readonly></textarea></div>`;
+}
 
 function bindWorkspace() {
   document.querySelectorAll("[data-open-book]").forEach(el => el.onclick = () => openBook(el.dataset.openBook));
@@ -174,6 +203,11 @@ function bindWorkspace() {
   if ($("generateChapter")) $("generateChapter").onclick = generateChapter;
   if ($("reviewChapter")) $("reviewChapter").onclick = reviewChapter;
   if ($("approveChapter")) $("approveChapter").onclick = approveChapter;
+  if ($("saveFrontMatter")) $("saveFrontMatter").onclick = saveFrontMatter;
+  if ($("fmAddAuthor")) $("fmAddAuthor").onclick = () => openAuthorProfileDialog(null);
+  if ($("fmEditAuthor")) $("fmEditAuthor").onclick = () => openAuthorProfileDialog($("fmAuthor").value);
+  if ($("fmDeleteAuthor")) $("fmDeleteAuthor").onclick = deleteAuthorProfile;
+  if ($("fmAuthor")) $("fmAuthor").onchange = () => { $("fmEditAuthor").disabled = !$("fmAuthor").value; $("fmDeleteAuthor").disabled = !$("fmAuthor").value; };
   if ($("loadManuscript")) $("loadManuscript").onclick = loadManuscript;
   if ($("downloadManuscript")) $("downloadManuscript").onclick = downloadManuscript;
 }
@@ -316,6 +350,55 @@ async function approveChapter(){const n=state.chapter;if(!confirm(`Approve Chapt
 async function saveChapterStructureOnly(){await api(`/api/books/${state.book.id}/chapters/${state.chapter}`,{method:"PATCH",body:JSON.stringify({structure:$("chapterStructure").value,povCharacterId:$("chapterPov").value})});state.book=await api(`/api/books/${state.book.id}`)}
 function toggleChapterButtons(on){["saveChapter","generateChapter","reviewChapter","approveChapter"].forEach(id=>{if($(id))$(id).disabled=on})}
 function message(value,isError=false){const el=$("chapterMessage");if(el){el.className=isError?"error":"success";el.textContent=value instanceof Error?value.message:String(value)}}
+async function saveFrontMatter(){
+  const config={
+    authorProfileId:$("fmAuthor").value||null,
+    copyrightPage:{mode:$("fmCopyrightMode").value,year:Number($("fmCopyrightYear").value),holder:$("fmCopyrightHolder").value,customText:$("fmCopyrightCustom").value},
+    dedicationPage:{mode:$("fmDedicationMode").value,dedicatee:$("fmDedicatee").value,customText:$("fmDedicationCustom").value},
+    preface:$("fmPreface").value,acknowledgments:$("fmAcknowledgments").value
+  };
+  try{
+    await api(`/api/books/${state.book.id}/front-matter`,{method:"PUT",body:JSON.stringify(config)});
+    await openBook(state.book.id);
+    $("fmMessage").textContent="Pages saved. Preview or download to verify.";
+  }catch(error){$("fmMessage").textContent=error.message}
+}
+async function openAuthorProfileDialog(profileId){
+  const profile=state.authorProfiles.find(p=>p.id===profileId);
+  const body=$("dialogBody");
+  body.innerHTML=`<h2>${profile?"Edit author page":"Create author page"}</h2>
+    ${dialogField("profileLabel","Profile label (for your selection list)",profile?.label||"")}
+    ${dialogField("profileByline","Author name / byline",profile?.byline||"")}
+    ${dialogField("profileBio","About the Author",profile?.bio||"",true)}
+    ${dialogField("profileWebsite","Website (optional)",profile?.website||"")}
+    ${dialogField("profileEmail","Public contact email (optional)",profile?.contactEmail||"")}
+    <div class="error" id="profileError" role="alert"></div><button type="button" id="profileSubmit">Save author page</button>`;
+  $("dialog").showModal();
+  $("profileSubmit").onclick=async()=>{
+    const profileData={label:$("profileLabel").value.trim(),byline:$("profileByline").value.trim(),bio:$("profileBio").value.trim(),website:$("profileWebsite").value.trim(),contactEmail:$("profileEmail").value.trim()};
+    if(!profileData.label||!profileData.byline||!profileData.bio){$("profileError").textContent="Label, author name, and biography are required.";return}
+    $("profileSubmit").disabled=true;
+    try{
+      const saved=await api(profile?`/api/author-profiles/${profile.id}`:"/api/author-profiles",{method:profile?"PUT":"POST",body:JSON.stringify(profileData)});
+      state.authorProfiles=await api("/api/author-profiles");
+      $("dialog").close();
+      // Select the new profile immediately; save the manuscript-page settings separately.
+      renderWorkspace();
+      $("fmAuthor").value=saved.id;
+      $("fmEditAuthor").disabled=false;$("fmDeleteAuthor").disabled=false;
+    }catch(error){$("profileError").textContent=error.message;$("profileSubmit").disabled=false}
+  };
+}
+async function deleteAuthorProfile(){
+  const id=$("fmAuthor").value;if(!id)return;
+  if(!confirm("Delete this author profile? It cannot be deleted while used by a book."))return;
+  try{
+    await api(`/api/author-profiles/${id}`,{method:"DELETE"});
+    state.authorProfiles=await api("/api/author-profiles");
+    renderWorkspace();
+  }catch(error){$("fmMessage").textContent=error.message}
+}
+
 async function loadManuscript(){try{$("manuscriptText").value=await api(`/api/books/${state.book.id}/manuscript`);}catch(error){alert(error.message)}}
 async function downloadManuscript(){try{const content=await api(`/api/books/${state.book.id}/manuscript`);const blob=new Blob([content],{type:"text/markdown;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`${(state.book.title||"manuscript").replace(/[^a-z0-9_-]+/gi,"-").replace(/^-|-$/g,"")||"manuscript"}.md`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(error){alert(error.message)}}
 function renderError(error){$("workspace").innerHTML=`<div class="empty-state"><h1>Book Studio</h1><p class="error">${esc(error.message)}</p></div>`}
