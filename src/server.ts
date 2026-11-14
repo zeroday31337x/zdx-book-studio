@@ -14,6 +14,7 @@ import { previousCanonRequired, wordCount } from "./context.js";
 import type { BookProject, Character } from "./types.js";
 import { AuthStore, expiredSessionCookie, sessionCookie, sessionTokenFromCookie } from "./auth.js";
 import { syncCanonChapters, writeCanonChapter } from "./manuscript.js";
+import { assembleManuscript } from "./front-matter.js";
 
 const siteEnv = loadEnv({ path: "/etc/zerodrivex/site.env" });
 if ((process.env.JWT_SECRET || "").length < 32 && siteEnv.parsed?.JWT_SECRET) process.env.JWT_SECRET = siteEnv.parsed.JWT_SECRET;
@@ -284,6 +285,26 @@ const frictionSchema = z.object({
   samples: z.array(z.string().min(80).max(20000)).max(5).optional(),
   authorNotes: z.string().max(10000).optional()
 }).strict();
+const authorProfileSchema = z.object({
+  label: z.string().trim().min(1).max(120),
+  byline: z.string().trim().min(1).max(200),
+  bio: z.string().trim().min(1).max(12000),
+  website: z.string().trim().max(400).default(""),
+  contactEmail: z.union([z.literal(""), z.string().email().max(320)]).default("")
+}).strict();
+
+const frontMatterSchema = z.object({
+  authorProfileId: z.string().uuid().nullable(),
+  copyrightPage: z.object({
+    mode: z.enum(["off", "default", "custom"]), year: z.number().int().min(1000).max(3000),
+    holder: z.string().max(250), customText: z.string().max(20000)
+  }).strict(),
+  dedicationPage: z.object({
+    mode: z.enum(["off", "default", "custom"]), dedicatee: z.string().max(500), customText: z.string().max(12000)
+  }).strict(),
+  preface: z.string().max(30000), acknowledgments: z.string().max(30000)
+}).strict();
+
 const characterSchema = z.object({
   id: z.string().min(1).max(80).optional(), name: z.string().min(1).max(200), guild: z.string().max(200).default(""), role: z.enum(["protagonist", "antagonist", "supporting"]).default("supporting"),
   povOrder: z.number().int().min(1).max(20).optional(), publicProfile: z.string().max(10000).default(""), worldview: z.string().max(10000).default(""), wound: z.string().max(10000).default(""),
@@ -394,6 +415,34 @@ app.use(["/api/books", "/api/books/*splat", "/api/codebound/seed"], (req, res, n
   }
   if (req.path === "/api/codebound/seed" && user.role !== "admin") return res.status(403).json({ error: "admin_required" });
   next();
+});
+// Reusable author pages live in the signed-in account, never in the shared book list.
+app.use("/api/author-profiles", (req, res, next) => {
+  if (!studioUser(req)) return res.status(401).json({ error: "authentication_required" });
+  if (req.method !== "GET" && req.get("origin") && req.get("origin") !== 'https://' + req.get("host"))
+    return res.status(403).json({ error: "origin_mismatch" });
+  next();
+});
+app.get("/api/author-profiles", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.json(store.listAuthorProfiles(studioUser(req)!.email));
+});
+app.post("/api/author-profiles", (req, res) => {
+  const parsed = authorProfileSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_author_profile", details: parsed.error.flatten() });
+  return res.status(201).json(store.createAuthorProfile(studioUser(req)!.email, parsed.data));
+});
+app.put("/api/author-profiles/:profileId", (req, res) => {
+  const parsed = authorProfileSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_author_profile", details: parsed.error.flatten() });
+  const profile = store.updateAuthorProfile(studioUser(req)!.email, req.params.profileId, parsed.data);
+  return profile ? res.json(profile) : res.status(404).json({ error: "author_profile_not_found" });
+});
+app.delete("/api/author-profiles/:profileId", (req, res) => {
+  const email = studioUser(req)!.email;
+  if (store.list().some(book => book.ownerEmail === email && book.frontMatter?.authorProfileId === req.params.profileId))
+    return res.status(409).json({ error: "author_profile_in_use" });
+  return store.deleteAuthorProfile(email, req.params.profileId) ? res.json({ deleted: true }) : res.status(404).json({ error: "author_profile_not_found" });
 });
 app.get("/api/plans", (req,res) => res.json({ plans: TIER_LIMITS, currentTier: studioUser(req)?.tier || "basic" }));
 app.get("/admin/users/review", (req,res) => {
@@ -544,6 +593,20 @@ app.patch("/api/books/:id", (req, res) => {
   const allowed = ["title", "tagline", "genre", "tone", "premise", "overview", "canon", "targetWords", "chapterTargetWords", "hardChapterWordCap", "seriesName", "writingStyle", "writingSample", "movementCount", "status"] as const;
   for (const key of allowed) if (req.body[key] !== undefined) (book as any)[key] = req.body[key];
   res.json(store.save(book));
+});
+app.put("/api/books/:id/front-matter", (req, res) => {
+  const book = store.get(req.params.id);
+  if (!book) return res.status(404).json({ error: "book_not_found" });
+  if (req.get("origin") && req.get("origin") !== 'https://' + req.get("host"))
+    return res.status(403).json({ error: "origin_mismatch" });
+  const parsed = frontMatterSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "invalid_front_matter", details: parsed.error.flatten() });
+  if (parsed.data.authorProfileId &&
+      (!book.ownerEmail || book.ownerEmail !== studioUser(req)!.email ||
+       !store.getAuthorProfile(studioUser(req)!.email, parsed.data.authorProfileId)))
+    return res.status(400).json({ error: "author_profile_not_available_for_book" });
+  book.frontMatter = parsed.data;
+  return res.json(store.save(book));
 });
 app.put('/api/books/:id/frictionwrite', (req, res) => {
   const book = store.get(req.params.id);
@@ -875,8 +938,14 @@ app.post("/api/books/:id/chapters/:number/approve", async (req, res) => {
 });
 app.get("/api/books/:id/manuscript", (req, res) => {
   const book = store.get(req.params.id); if (!book) return res.status(404).json({ error: "book_not_found" });
-  const text = book.chapters.filter(ch => ch.status === "canon").map(ch => `# ${ch.title}\n\n${ch.approvedText}`).join("\n\n---\n\n");
-  res.type("text/markdown").send(`# ${book.title}\n\n${text}\n`);
+  const profileId = book.frontMatter?.authorProfileId;
+  const author = profileId && book.ownerEmail ? store.getAuthorProfile(book.ownerEmail, profileId) : undefined;
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.type("text/markdown").send(assembleManuscript(book, author));
+  } catch (error) {
+    return res.status(422).json({ error: error instanceof Error ? error.message : "manuscript_front_matter_invalid" });
+  }
 });
 
 function chapterOf(book: BookProject, value: string) { const number = Number(value); return Number.isInteger(number) ? book.chapters.find(ch => ch.number === number) : undefined; }

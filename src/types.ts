@@ -68,6 +68,28 @@ export interface SeriesAttachment {
   attachedAt: string;
 }
 
+export interface AuthorProfile {
+  id: string;
+  ownerEmail: string;
+  label: string;
+  byline: string;
+  bio: string;
+  website: string;
+  contactEmail: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PageMode = "off" | "default" | "custom";
+
+export interface FrontMatterConfig {
+  authorProfileId: string | null;
+  copyrightPage: { mode: PageMode; year: number; holder: string; customText: string };
+  dedicationPage: { mode: PageMode; dedicatee: string; customText: string };
+  preface: string;
+  acknowledgments: string;
+}
+
 export interface BookProject {
   frictionWrite?: import('./frictionwrite.js').FrictionConfig;
   id: string;
@@ -77,6 +99,8 @@ export interface BookProject {
   /** Sealed prior-book canon attached for series building. Read-only reference; see series.ts. */
   attachments?: SeriesAttachment[];
   ownerEmail?: string;
+  /** Front and back matter, optional for legacy books. */
+  frontMatter?: FrontMatterConfig;
   autoRun?: { status: "running" | "paused" | "complete"; nextChapter: number; lastError?: string; updatedAt: string };
   tagline: string;
   genre: string;
